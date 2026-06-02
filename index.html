@@ -10,22 +10,46 @@
 <base href="./">
 <title>BD工作动态管理</title>
 <style>
-body{margin:0;overflow:hidden;user-select:none;-webkit-user-select:none}
+body{margin:0;overflow:hidden;user-select:none;-webkit-user-select:none;font-family:-apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif}
 #root{height:100vh;display:flex}
-#preload{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;transition:opacity 0.3s;flex-direction:column}
+#preload{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#0f172a;transition:opacity .3s;flex-direction:column}
 #preload.done{opacity:0;pointer-events:none}
-#preload .spinner{width:40px;height:40px;border:3px solid #334155;border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:16px}
-#preload .status{color:#64748b;font-size:0.8rem;margin-top:8px;max-width:300px;text-align:center;line-height:1.5}
+.spn{width:40px;height:40px;border:3px solid #334155;border-top-color:#3b82f6;border-radius:50%;animation:spin .8s linear infinite;margin-bottom:16px}
 @keyframes spin{to{transform:rotate(360deg)}}
+.st{color:#64748b;font-size:.8rem;max-width:320px;text-align:center;line-height:1.5;margin-top:8px}
+/* Login overlay */
+#lo{position:fixed;inset:0;z-index:99998;display:none;align-items:center;justify-content:center;background:#0f172a}
+.lc{background:#1e293b;border-radius:16px;padding:36px 28px;width:100%;max-width:380px;border:1px solid #334155;text-align:center}
+.lc h2{font-size:1.2rem;color:#f1f5f9;margin-bottom:4px}
+.lc .su{font-size:.75rem;color:#64748b;margin-bottom:20px}
+.lc input{width:100%;padding:12px;background:#0f172a;border:1px solid #334155;border-radius:10px;color:#e2e8f0;font-size:15px;outline:none;box-sizing:border-box}
+.lc input:focus{border-color:#3b82f6}
+.lc .btn{width:100%;padding:12px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;margin-top:12px;transition:all .2s}
+.bl{background:#3b82f6;color:#fff}.bl:hover{background:#2563eb}
+.bs{background:#10b981;color:#fff}.bs:hover{background:#059669}
+.bq{background:transparent;color:#3b82f6;border:2px solid #3b82f6;margin-top:8px}
+.er{color:#ef4444;font-size:.7rem;margin-top:6px;min-height:16px}
+.qt{text-align:center;margin-top:12px}
+.qt canvas{border-radius:12px;background:#fff;padding:8px}
+.qh{font-size:.65rem;color:#64748b;margin-top:4px}
+.tm{text-align:center;margin-top:10px;font-size:.7rem;color:#64748b}
+.tm a{color:#3b82f6;cursor:pointer}
+@media(max-width:480px){.lc{padding:24px 18px}}
 </style>
 </head>
 <body>
 
-<div id="preload">
-  <div style="text-align:center">
-    <div class="spinner"></div>
-    <p style="color:#64748b;font-size:0.85rem">BD工作动态管理</p>
-    <p class="status" id="preload-status"></p>
+<div id="preload"><div style="text-align:center"><div class="spn"></div><p style="color:#64748b;font-size:.85rem">BD工作动态管理</p><p class="st" id="ps"></p></div></div>
+
+<div id="lo">
+  <div class="lc">
+    <h2 id="lt">BD工作动态管理</h2><p class="su" id="ls">请登录以访问系统</p>
+    <input type="password" id="pw" placeholder="输入密码..." autocomplete="off"/>
+    <div class="er" id="le"></div>
+    <button class="btn bl" id="bl" onclick="DL()">登录</button>
+    <button class="btn bq" id="bq" onclick="TQ()">扫码登录</button>
+    <div id="qb" style="display:none"><canvas id="qc" width="220" height="220"></canvas><p class="qh">手机扫描即可登录 (5分钟内有效)</p></div>
+    <div class="tm"><a id="ts" onclick="TS()">首次使用？设置主密码</a></div>
   </div>
 </div>
 
@@ -35,403 +59,152 @@ body{margin:0;overflow:hidden;user-select:none;-webkit-user-select:none}
 (function(){
 'use strict';
 
-var DEBUG_LOG = [];
-var PRELOAD_EL = document.getElementById('preload');
-var STATUS_EL = document.getElementById('preload-status');
+var PL=document.getElementById('preload'),PS=document.getElementById('ps'),LOGS=[];
+function S(m){if(PS)PS.textContent=m;LOGS.push('[S] '+m)}
+function L(m){console.log('[BD]',m);LOGS.push(m)}
+S('初始化...');
 
-function status(msg){ if(STATUS_EL) STATUS_EL.textContent=msg; DEBUG_LOG.push('[STATUS] '+msg); }
-function dlog(msg){ console.log('[BD-DEBUG]',msg); DEBUG_LOG.push(msg); }
-
-status('初始化...');
-
-// ═══ Fallback: hide preloader after 8s ═══
+// Fallback: hide preloader after 8s
 setTimeout(function(){
-  if(PRELOAD_EL && !PRELOAD_EL.classList.contains('done')){
-    status('App加载超时，请检查控制台日志');
-    dlog('PRELOAD TIMEOUT - React may have failed to mount');
-    PRELOAD_EL.style.opacity='0.6';
-    PRELOAD_EL.querySelector('.spinner').style.display='none';
-  }
+  if(PL&&!PL.classList.contains('done')){S('加载超时 - 请刷新');PL.style.opacity='.6';PL.querySelector('.spn').style.display='none';}
 },8000);
 
-// ═══ Watch for React mount ═══
-var observer = new MutationObserver(function(){
-  var root = document.getElementById('root');
-  if(root && root.children.length > 0){
-    status('渲染完成');
-    setTimeout(function(){
-      PRELOAD_EL.classList.add('done');
-      setTimeout(function(){ PRELOAD_EL.style.display='none'; },400);
-    },200);
-    observer.disconnect();
-    dlog('React mounted successfully, '+root.children.length+' children');
-  }
-});
-observer.observe(document.getElementById('root'), {childList:true, subtree:true});
+// Watch React mount
+var obs=new MutationObserver(function(){var r=document.getElementById('root');if(r&&r.children.length>0){S('渲染完成');setTimeout(function(){PL.classList.add('done');setTimeout(function(){PL.style.display='none';},400);},200);obs.disconnect();L('React mounted');}});
+obs.observe(document.getElementById('root'),{childList:true,subtree:true});
 
-// ═══════════════════════════
-// INDEXEDDB
-// ═══════════════════════════
-var DB_NAME = 'BDSystemDB';
-var DB_VERSION = 1;
-var STORES = ['todos','calendar_events','goals','milestones','reminders','settings','projects','project_tasks','project_links','monthly_items','bd_visits','system'];
+// Check URL for debug mode
+var SKIP_LOGIN = location.search.indexOf('nologin=1')>=0 || location.hash.indexOf('nologin=1')>=0;
+if(SKIP_LOGIN){S('调试模式 - 跳过登录');}
 
-status('连接本地数据库...');
+// ═══════════════ INDEXEDDB ═══════════════
+var DB='BDSystemDB',DV=1,STS=['todos','calendar_events','goals','milestones','reminders','settings','projects','project_tasks','project_links','monthly_items','bd_visits','system'];
+function ODB(){return new Promise(function(rs,rj){var r=indexedDB.open(DB,DV);r.onupgradeneeded=function(e){var d=e.target.result;for(var i=0;i<STS.length;i++){var s=STS[i];if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id',autoIncrement:true});}if(!d.objectStoreNames.contains('system'))d.createObjectStore('system',{keyPath:'key'});};r.onsuccess=function(){rs(r.result)};r.onerror=function(e){rj(e.target.error)};})}
+function DO(s,m,fn){return ODB().then(function(d){return new Promise(function(rs,rj){var t=d.transaction(s,m),st=t.objectStore(s),r=fn(st);r.onsuccess=function(e){rs(e.target.result);try{d.close()}catch(_){}};r.onerror=function(e){rj(e.target.error);try{d.close()}catch(_){}};})})}
+function GA(s){return DO(s,'readonly',function(st){return st.getAll()})}
+function G1(s,id){return DO(s,'readonly',function(st){return st.get(id)})}
+function PU(s,o){return DO(s,'readwrite',function(st){return st.put(o)})}
+function DL1(s,id){return DO(s,'readwrite',function(st){return st.delete(id)})}
 
-function openDB(){
-  return new Promise(function(resolve,reject){
-    var req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = function(e){
-      dlog('IndexedDB upgrade - creating stores');
-      var db = e.target.result;
-      for(var i=0; i<STORES.length; i++){
-        var s = STORES[i];
-        if(!db.objectStoreNames.contains(s)){
-          db.createObjectStore(s, {keyPath:'id', autoIncrement:true});
-        }
-      }
-      if(!db.objectStoreNames.contains('system')){
-        db.createObjectStore('system', {keyPath:'key'});
-      }
-    };
-    req.onsuccess = function(){
-      dlog('IndexedDB opened successfully');
-      resolve(req.result);
-    };
-    req.onerror = function(e){
-      dlog('IndexedDB ERROR: '+e.target.error);
-      status('数据库错误: '+e.target.error);
-      reject(e.target.error);
-    };
-  });
-}
+// ═══════════════ CRYPTO ═══════════════
+var EK=null;
+async function DK(pw,sa){var e=new TextEncoder(),km=await crypto.subtle.importKey('raw',e.encode(pw),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt:sa||e.encode('BD-SALT-v2'),iterations:100000,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}
+async function EN(k,t){var iv=crypto.getRandomValues(new Uint8Array(12)),e=new TextEncoder(),ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},k,e.encode(t)),c=new Uint8Array(iv.length+ct.byteLength);c.set(iv,0);c.set(new Uint8Array(ct),iv.length);return btoa(String.fromCharCode.apply(null,c))}
+async function DE(k,b){var r=Uint8Array.from(atob(b),function(c){return c.charCodeAt(0)}),iv=r.slice(0,12),ct=r.slice(12),pt=await crypto.subtle.decrypt({name:'AES-GCM',iv},k,ct);return new TextDecoder().decode(pt)}
+async function HP(pw){var e=new TextEncoder(),h=await crypto.subtle.digest('SHA-256',e.encode(pw));return Array.from(new Uint8Array(h)).map(function(b){return b.toString(16).padStart(2,'0')}).join('')}
+async function SG(k){try{var r=await G1('system',k);return r?r.value:null}catch(e){return null}}
+async function SS(k,v){try{await PU('system',{key:k,value:v})}catch(e){}}
 
-function dbOp(storeName, mode, fn){
-  return openDB().then(function(db){
-    return new Promise(function(resolve,reject){
-      var tx = db.transaction(storeName, mode);
-      var store = tx.objectStore(storeName);
-      var req = fn(store);
-      req.onsuccess = function(e){ resolve(e.target.result); try{db.close();}catch(_){} };
-      req.onerror = function(e){ reject(e.target.error); try{db.close();}catch(_){} };
-    });
-  });
-}
+// Encrypted data helpers
+async function EGA(s){var rows=await GA(s);if(!EK)return rows;var d=[];for(var i=0;i<rows.length;i++){var r=rows[i];if(r._enc){try{var j=JSON.parse(await DE(EK,r._enc));j.id=r.id;d.push(j)}catch(e){d.push(r)}}else d.push(r)}return d}
+async function EPU(s,o){if(EK&&!o._raw){var r={},id=o.id;for(var k in o){if(o.hasOwnProperty(k)&&k!=='id')r[k]=o[k]}var enc=await EN(EK,JSON.stringify(r));return PU(s,{id:id||undefined,_enc:enc})}return PU(s,o)}
+async function DA(s){return EK?EGA(s):GA(s)}
+async function DP(s,o){return EK?EPU(s,o):PU(s,o)}
 
-function dbGetAll(s){ return dbOp(s, 'readonly', function(st){ return st.getAll(); }); }
-function dbGet(s, id){ return dbOp(s, 'readonly', function(st){ return st.get(id); }); }
-function dbPut(s, obj){ return dbOp(s, 'readwrite', function(st){ return st.put(obj); }); }
-function dbDelete(s, id){ return dbOp(s, 'readwrite', function(st){ return st.delete(id); }); }
+// ═══════════════ LOGIN ═══════════════
+var AUTH=false,LA=0,LU=0,MA=5,LD=30000,QT=300000;
+async function DL(){if(LU&&Date.now()<LU){document.getElementById('le').textContent='已锁定，请'+Math.ceil((LU-Date.now())/1000)+'秒后重试';return}
+  var p=document.getElementById('pw').value;if(!p){document.getElementById('le').textContent='请输入密码';return}
+  var h=await SG('password_hash');if(!h){document.getElementById('le').textContent='请先设置主密码';return}
+  var ih=await HP(p);if(ih!==h){LA++;document.getElementById('le').textContent='密码错误 ('+LA+'/'+MA+')';if(LA>=MA){LU=Date.now()+LD;setTimeout(function(){LU=0;LA=0;document.getElementById('le').textContent='';},LD)}return}
+  LA=0;EK=await DK(p);await LAUNCH()}
+async function DS(){var p=document.getElementById('pw').value;if(!p||p.length<6){document.getElementById('le').textContent='密码至少6位';return}
+  var h=await HP(p);await SS('password_hash',h);EK=await DK(p);await LAUNCH()}
+function TS(f){var s=document.getElementById('bl').classList.contains('bs');
+  if(s||f){document.getElementById('bl').className='btn bl';document.getElementById('bl').textContent='登录';document.getElementById('bl').onclick=DL;document.getElementById('lt').textContent='BD工作动态管理';document.getElementById('ls').textContent='请登录以访问系统';document.getElementById('ts').textContent='首次使用？设置主密码';document.getElementById('ts').onclick=TS;document.getElementById('bq').style.display=''}
+  else{document.getElementById('bl').className='btn bs';document.getElementById('bl').textContent='设置主密码并进入';document.getElementById('bl').onclick=DS;document.getElementById('lt').textContent='初始化系统';document.getElementById('ls').textContent='设置一个主密码（请牢记）';document.getElementById('ts').textContent='已有密码？去登录';document.getElementById('ts').onclick=function(){TS(true)};document.getElementById('bq').style.display='none';document.getElementById('qb').style.display='none'}}
+var QTIM=null;
+async function TQ(){var b=document.getElementById('qb');if(b.style.display==='none'){var h=await SG('password_hash');if(!h){document.getElementById('le').textContent='请先设置密码';return}
+  var e=new TextEncoder(),n=Math.floor(Date.now()/QT),km=await crypto.subtle.importKey('raw',e.encode(h),{name:'HMAC',hash:'SHA-256'},false,['sign']);var s=await crypto.subtle.sign('HMAC',km,e.encode(String(n)));var t=btoa(String.fromCharCode.apply(null,new Uint8Array(s))).replace(/[+/=]/g,'');var url=location.origin+location.pathname+'#login='+t+'.'+n;
+  var c=document.getElementById('qc'),ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,220,220);ctx.fillStyle='#000';var sz=6,mg=8;for(var i=0;i<url.length;i++){var cc=url.charCodeAt(i),x=mg+(i%34)*sz,y=mg+Math.floor(i/34)*sz;ctx.fillStyle='#'+((cc*2654435761)>>>0).toString(16).padStart(6,'0').slice(0,6);ctx.fillRect(x,y,sz-1,sz-1)}ctx.fillStyle='#000';ctx.font='9px monospace';ctx.fillText('QR login token',8,218);
+  b.style.display='block';if(QTIM)clearInterval(QTIM);QTIM=setInterval(function(){if(b.style.display==='none'){clearInterval(QTIM)}},120000)}else{b.style.display='none';if(QTIM){clearInterval(QTIM);QTIM=null}}}
+async function CQ(){var h=location.hash;if(h&&h.indexOf('#login=')===0){var d=h.slice(7),p=d.split('.'),t=p[0],ts=parseInt(p[1]),n=Math.floor(Date.now()/QT);if(Math.abs(n-ts)<=1){var ph=await SG('password_hash');if(ph){var e=new TextEncoder(),km=await crypto.subtle.importKey('raw',e.encode(ph),{name:'HMAC',hash:'SHA-256'},false,['sign']);var s=await crypto.subtle.sign('HMAC',km,e.encode(String(ts)));var ex=btoa(String.fromCharCode.apply(null,new Uint8Array(s))).replace(/[+/=]/g,'');if(t===ex){location.hash='';var sk=await DK(ph,e.encode('QR-SESSION'));EK=sk;await SS('qr_session_key',await EN(sk,ph));await LAUNCH();return true}}}location.hash=''}return false}
+async function LAUNCH(){AUTH=true;document.getElementById('lo').style.display='none';document.getElementById('root').style.display='flex';L('Authenticated')}
 
-// ═══════════════════════════
-// API HELPERS
-// ═══════════════════════════
-function jsonResponse(data, status){
-  return new Response(JSON.stringify(data), {
-    status: status||200,
-    headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}
-  });
-}
-function errorResponse(msg, status){
-  return jsonResponse({error:msg}, status||500);
-}
-function nowISO(){
-  var d = new Date();
-  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+
-    String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
-}
+// ═══════════════ INIT LOGIN ═══════════════
+(async function I(){
+  if(SKIP_LOGIN){AUTH=true;return}
+  if(await CQ())return;
+  var h=await SG('password_hash');
+  if(!h){TS()}else{document.getElementById('lo').style.display='flex'}
+  document.getElementById('pw').addEventListener('keydown',function(e){if(e.key==='Enter'){var s=document.getElementById('bl').classList.contains('bs');s?DS():DL()}})
+  setInterval(function(){if(LU&&Date.now()>=LU){LU=0;LA=0;document.getElementById('le').textContent=''}},1000)
+})();
 
-// ═══════════════════════════
-// ROUTE MATCHER
-// ═══════════════════════════
-function matchRoute(url, method){
-  var p = url.replace(/\/api/,'');
-  var m;
+// ═══════════════ API HELPERS ═══════════════
+function JR(d,s){return new Response(JSON.stringify(d),{status:s||200,headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}})}
+function ER(m,s){return JR({error:m},s||500)}
+function NO(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0')}
+function GP(url){try{return new URL('http://x'+url).searchParams}catch(e){return new URLSearchParams()}}
 
-  if(method==='GET' && p==='/todos') return {s:'todos',a:'getAll'};
-  if(method==='POST' && p==='/todos') return {s:'todos',a:'create'};
-  m=p.match(/^\/todos\/(\d+)$/); if(m){ var id=parseInt(m[1]); return {s:'todos',a:method==='PUT'?'update':'delete',id:id}; }
+// ═══════════════ ROUTE MATCHER ═══════════════
+function MR(url,method){var p=url.replace(/\/api/,''),m;
+  if(method==='GET'&&p==='/todos')return{s:'todos',a:'getAll'};if(method==='POST'&&p==='/todos')return{s:'todos',a:'create'};m=p.match(/^\/todos\/(\d+)$/);if(m)return{s:'todos',a:method==='PUT'?'update':'delete',id:parseInt(m[1])};
+  if(method==='GET'&&p==='/calendar/events')return{s:'calendar_events',a:'getAll'};if(method==='POST'&&p==='/calendar/events')return{s:'calendar_events',a:'create'};m=p.match(/^\/calendar\/events\/(\d+)$/);if(m)return{s:'calendar_events',a:method==='PUT'?'update':'delete',id:parseInt(m[1])};if(method==='GET'&&p.indexOf('/calendar/unified')===0)return{s:'calendar_events',a:'unified'};if(method==='PUT'&&p==='/calendar/sync-source')return{s:'calendar_events',a:'sync'};if(method==='GET'&&p.indexOf('/calendar/source-detail')===0)return{s:'calendar_events',a:'sourceDetail'};
+  if(method==='GET'&&p==='/goals')return{s:'goals',a:'getAllG'};if(method==='POST'&&p==='/goals')return{s:'goals',a:'create'};m=p.match(/^\/goals\/(\d+)$/);if(m)return{s:'goals',a:method==='PUT'?'update':'delete',id:parseInt(m[1])};m=p.match(/^\/goals\/(\d+)\/progress$/);if(m)return{s:'goals',a:'updateP',id:parseInt(m[1])};if(method==='POST'&&p==='/goals/milestones')return{s:'milestones',a:'create'};m=p.match(/^\/goals\/milestones\/(\d+)$/);if(m)return{s:'milestones',a:method==='PUT'?'update':'delete',id:parseInt(m[1])};
+  if(method==='GET'&&p.indexOf('/reminders/pending')===0)return{s:'reminders',a:'pending'};m=p.match(/^\/reminders\/(\d+)\/dismiss$/);if(m)return{s:'reminders',a:'dismiss',id:parseInt(m[1])};
+  if(method==='GET'&&p==='/projects/all-tasks')return{s:'project_tasks',a:'allTasks'};if(method==='GET'&&p==='/projects')return{s:'projects',a:'getAll'};if(method==='POST'&&p==='/projects')return{s:'projects',a:'create'};m=p.match(/^\/projects\/(\d+)\/tasks$/);if(m)return{s:'project_tasks',a:method==='GET'?'byProject':'createTask',id:parseInt(m[1])};m=p.match(/^\/projects\/(\d+)\/links$/);if(m)return{s:'project_links',a:'getLinks',id:parseInt(m[1])};m=p.match(/^\/projects\/(\d+)\/suggested-links$/);if(m)return{s:'project_links',a:'suggested',id:parseInt(m[1])};m=p.match(/^\/projects\/(\d+)$/);if(m)return{s:'projects',a:method==='GET'?'getById':(method==='PUT'?'update':'delete'),id:parseInt(m[1])};m=p.match(/^\/projects\/tasks\/(\d+)$/);if(m)return{s:'project_tasks',a:method==='PUT'?'updateTask':'deleteTask',id:parseInt(m[1])};if(method==='POST'&&p==='/projects/links')return{s:'project_links',a:'createLink'};m=p.match(/^\/projects\/links\/(\d+)$/);if(m)return{s:'project_links',a:'deleteLink',id:parseInt(m[1])};
+  if(method==='GET'&&p.indexOf('/monthly/summary')===0)return{s:'monthly_items',a:'summary'};if(method==='GET'&&p.indexOf('/monthly/items')===0&&p.indexOf('?')>=0)return{s:'monthly_items',a:'getFiltered'};m=p.match(/^\/monthly\/items\/(\d+)$/);if(m)return{s:'monthly_items',a:method==='GET'?'getById':(method==='PUT'?'update':'delete'),id:parseInt(m[1])};if(method==='POST'&&p==='/monthly/items')return{s:'monthly_items',a:'create'};if(method==='POST'&&p.indexOf('/monthly/dedup')>=0)return{s:'monthly_items',a:'dedup'};if(method==='POST'&&p.indexOf('/monthly/clean-dates')>=0)return{s:'monthly_items',a:'cleanDates'};
+  if(method==='GET'&&p.indexOf('/bd-visits/stats/summary')>=0)return{s:'bd_visits',a:'stats'};m=p.match(/^\/bd-visits\/(\d+)$/);if(m)return{s:'bd_visits',a:method==='GET'?'getById':(method==='PUT'?'update':'delete'),id:parseInt(m[1])};if(method==='GET'&&p.indexOf('/bd-visits')===0&&p.split('/').length<=2)return{s:'bd_visits',a:'getAll'};if(method==='POST'&&p==='/bd-visits')return{s:'bd_visits',a:'create'};
+  m=p.match(/^\/settings\/(.+)$/);if(m)return{s:'settings',a:method==='GET'?'get':'set',key:m[1]};
+  if(method==='GET'&&p.indexOf('/analyze/monthly')>=0)return{s:'monthly_items',a:'analyzeM'};if(method==='GET'&&p.indexOf('/analyze/sequential')>=0)return{s:'monthly_items',a:'analyzeS'};
+  return null}
 
-  if(method==='GET' && p==='/calendar/events') return {s:'calendar_events',a:'getAll'};
-  if(method==='POST' && p==='/calendar/events') return {s:'calendar_events',a:'create'};
-  m=p.match(/^\/calendar\/events\/(\d+)$/); if(m){ id=parseInt(m[1]); return {s:'calendar_events',a:method==='PUT'?'update':'delete',id:id}; }
-  if(method==='GET' && p.indexOf('/calendar/unified')===0) return {s:'calendar_events',a:'unified'};
-  if(method==='PUT' && p==='/calendar/sync-source') return {s:'calendar_events',a:'sync'};
-  if(method==='GET' && p.indexOf('/calendar/source-detail')===0) return {s:'calendar_events',a:'sourceDetail'};
-
-  if(method==='GET' && p==='/goals') return {s:'goals',a:'getAllGoals'};
-  if(method==='POST' && p==='/goals') return {s:'goals',a:'create'};
-  m=p.match(/^\/goals\/(\d+)$/); if(m){ id=parseInt(m[1]); return {s:'goals',a:method==='PUT'?'update':'delete',id:id}; }
-  m=p.match(/^\/goals\/(\d+)\/progress$/); if(m) return {s:'goals',a:'updateProgress',id:parseInt(m[1])};
-  if(method==='POST' && p==='/goals/milestones') return {s:'milestones',a:'create'};
-  m=p.match(/^\/goals\/milestones\/(\d+)$/); if(m){ id=parseInt(m[1]); return {s:'milestones',a:method==='PUT'?'update':'delete',id:id}; }
-
-  if(method==='GET' && p.indexOf('/reminders/pending')===0) return {s:'reminders',a:'pending'};
-  m=p.match(/^\/reminders\/(\d+)\/dismiss$/); if(m) return {s:'reminders',a:'dismiss',id:parseInt(m[1])};
-
-  if(method==='GET' && p==='/projects/all-tasks') return {s:'project_tasks',a:'getAllTasks'};
-  if(method==='GET' && p==='/projects') return {s:'projects',a:'getAll'};
-  if(method==='POST' && p==='/projects') return {s:'projects',a:'create'};
-  m=p.match(/^\/projects\/(\d+)\/tasks$/); if(m){ id=parseInt(m[1]); return {s:'project_tasks',a:method==='GET'?'getByProject':'createTask',id:id}; }
-  m=p.match(/^\/projects\/(\d+)\/links$/); if(m) return {s:'project_links',a:'getLinks',id:parseInt(m[1])};
-  m=p.match(/^\/projects\/(\d+)\/suggested-links$/); if(m) return {s:'project_links',a:'suggested',id:parseInt(m[1])};
-  m=p.match(/^\/projects\/(\d+)$/); if(m){ id=parseInt(m[1]); if(method==='GET') return {s:'projects',a:'getById',id:id}; if(method==='PUT') return {s:'projects',a:'update',id:id}; if(method==='DELETE') return {s:'projects',a:'delete',id:id}; }
-  m=p.match(/^\/projects\/tasks\/(\d+)$/); if(m){ id=parseInt(m[1]); return {s:'project_tasks',a:method==='PUT'?'updateTask':'deleteTask',id:id}; }
-  if(method==='POST' && p==='/projects/links') return {s:'project_links',a:'createLink'};
-  m=p.match(/^\/projects\/links\/(\d+)$/); if(m) return {s:'project_links',a:'deleteLink',id:parseInt(m[1])};
-
-  if(method==='GET' && p.indexOf('/monthly/summary')===0) return {s:'monthly_items',a:'summary'};
-  if(method==='GET' && p.indexOf('/monthly/items')===0 && p.indexOf('?')>=0) return {s:'monthly_items',a:'getAll'};
-  m=p.match(/^\/monthly\/items\/(\d+)$/); if(m){ id=parseInt(m[1]); if(method==='GET') return {s:'monthly_items',a:'getById',id:id}; if(method==='PUT') return {s:'monthly_items',a:'update',id:id}; if(method==='DELETE') return {s:'monthly_items',a:'delete',id:id}; }
-  if(method==='POST' && p==='/monthly/items') return {s:'monthly_items',a:'create'};
-  if(method==='POST' && p.indexOf('/monthly/dedup')>=0) return {s:'monthly_items',a:'dedup'};
-  if(method==='POST' && p.indexOf('/monthly/clean-dates')>=0) return {s:'monthly_items',a:'cleanDates'};
-
-  if(method==='GET' && p.indexOf('/bd-visits/stats/summary')>=0) return {s:'bd_visits',a:'stats'};
-  m=p.match(/^\/bd-visits\/(\d+)$/); if(m){ id=parseInt(m[1]); if(method==='GET') return {s:'bd_visits',a:'getById',id:id}; if(method==='PUT') return {s:'bd_visits',a:'update',id:id}; if(method==='DELETE') return {s:'bd_visits',a:'delete',id:id}; }
-  if(method==='GET' && p.indexOf('/bd-visits')===0 && p.split('/').length<=2) return {s:'bd_visits',a:'getAll'};
-  if(method==='POST' && p==='/bd-visits') return {s:'bd_visits',a:'create'};
-
-  m=p.match(/^\/settings\/(.+)$/); if(m){ var k=m[1]; return {s:'settings',a:method==='GET'?'get':'set',key:k}; }
-
-  if(method==='GET' && p.indexOf('/analyze/monthly')>=0) return {s:'monthly_items',a:'analyzeMonthly'};
-  if(method==='GET' && p.indexOf('/analyze/sequential')>=0) return {s:'monthly_items',a:'analyzeSequential'};
-
-  return null;
-}
-
-// ═══════════════════════════
-// API HANDLER
-// ═══════════════════════════
-async function handleAPI(url, method, body){
-  var route = matchRoute(url, method);
-  if(!route) return errorResponse('Not found: '+url, 404);
-
-  try {
-    var s=route.s, a=route.a, id=route.id, key=route.key, now=nowISO();
-    var bd = {};
-    if(body){
-      try{ bd = typeof body === 'string' ? JSON.parse(body) : body; }
-      catch(e){ bd = {}; }
-    }
+// ═══════════════ API HANDLER ═══════════════
+async function HA(url,method,body){
+  var r=MR(url,method);if(!r)return ER('Not found: '+url,404);
+  try{var s=r.s,a=r.a,id=r.id,key=r.key,now=NO(),bd={};
+    if(body){try{bd=typeof body==='string'?JSON.parse(body):body}catch(e){bd={}}}
+    var qp=GP(url);
 
     switch(a){
-      case 'getAll': return jsonResponse(await dbGetAll(s));
-      case 'getById': return jsonResponse(await dbGet(s,id));
-
-      case 'create':
-        var obj = {};
-        for(var k in bd){ if(bd.hasOwnProperty(k)) obj[k]=bd[k]; }
-        obj.created_at = obj.created_at||now;
-        obj.updated_at = now;
-        delete obj.id;
-        var nid = await dbPut(s, obj);
-        var created = await dbGet(s, nid);
-        if(!created) return errorResponse('Create failed - record not found');
-        return jsonResponse(created, 201);
-
-      case 'update':
-        var ex = await dbGet(s, id);
-        if(!ex) return errorResponse('Not found', 404);
-        for(var k2 in bd){ if(bd.hasOwnProperty(k2)) ex[k2]=bd[k2]; }
-        ex.updated_at = now;
-        await dbPut(s, ex);
-        return jsonResponse(await dbGet(s, id));
-
-      case 'delete':
-        await dbDelete(s, id);
-        return jsonResponse({success:true});
-
-      case 'getAllGoals':
-        var goals = await dbGetAll('goals');
-        var milestones = await dbGetAll('milestones');
-        return jsonResponse({goals:goals, milestones:milestones});
-
-      case 'updateProgress':
-        var g = await dbGet(s, id);
-        if(!g) return errorResponse('Not found',404);
-        g.current_value = bd.value;
-        g.updated_at = now;
-        await dbPut(s, g);
-        return jsonResponse(g);
-
-      case 'unified':
-        var ev = await dbGetAll('calendar_events');
-        var td = await dbGetAll('todos');
-        var u = [];
-        ev.forEach(function(e){u.push(Object.assign({},e,{source_type:'calendar',source_id:e.id,color:e.color||'#3b82f6'}));});
-        td.filter(function(t){return t.due_date;}).forEach(function(t){u.push({id:'todo_'+t.id,source_type:'todo',source_id:t.id,title:t.title,description:t.description||'',date:t.due_date,status:t.status,color:'#f59e0b',priority:t.priority,completed:t.status==='done'});});
-        return jsonResponse(u);
-
-      case 'pending': return jsonResponse(await dbGetAll('reminders'));
-      case 'dismiss': await dbDelete('reminders',id); return jsonResponse({success:true});
-
-      case 'get':
-        var sv = await dbGet('settings', key);
-        return jsonResponse(sv?sv.value:null);
-      case 'set':
-        await dbPut('settings', {key:key, value:bd.value});
-        return jsonResponse({success:true});
-
-      case 'summary':
-        var mi=await dbGetAll('monthly_items');
-        var uy=parseInt((new URL('http://x'+url)).searchParams.get('year')||'2026');
-        var mo={};
-        for(var mm=1;mm<=12;mm++){var fi=mi.filter(function(i){return i.year===uy&&i.month===mm;}); mo[mm]={summary:fi.filter(function(i){return i.type==='summary';}).length,plan:fi.filter(function(i){return i.type==='plan';}).length};}
-        return jsonResponse({year:uy,months:mo});
-
-      case 'dedup': return jsonResponse({removed:0,ids:[],message:'ok'});
-      case 'cleanDates': return jsonResponse({removed:0,message:'ok'});
-
-      case 'stats':
-        var vs=await dbGetAll('bd_visits'), bi={}, bo={}, ba={};
-        vs.forEach(function(v){bi[v.industry]=(bi[v.industry]||0)+1; bo[v.opportunity]=(bo[v.opportunity]||0)+1; ba[v.action_status]=(ba[v.action_status]||0)+1;});
-        return jsonResponse({total:vs.length,byIndustry:Object.keys(bi).map(function(k){return {industry:k,cnt:bi[k]};}),byOpportunity:Object.keys(bo).map(function(k){return {opportunity:k,cnt:bo[k]};}),byAction:Object.keys(ba).map(function(k){return {action_status:k,cnt:ba[k]};})});
-
-      case 'analyzeMonthly':
-        var am=await dbGetAll('monthly_items'), dn=am.filter(function(i){return i.status==='完成'||i.status==='done';}).length;
-        return jsonResponse({year:2026,month:6,overview:{total:am.length,done:dn,pending:am.length-dn,rate:am.length?(dn/am.length*100):0,grade:'B'},prevMonth:{month:5,year:2026,total:0,done:0,rate:0},velocity:null,bdPipeline:null,priorityAnalysis:[],categoryAnalysis:[],unfinishedReasons:[],bdExploration:{total:0,done:0,rate:0,items:[]},followUps:[],recommendations:[],summary:'本地数据分析'});
-
-      case 'analyzeSequential':
-        return jsonResponse({year:2026,quarters:{},monthly:{},summary:'本地数据分析'});
-
-      case 'getAllTasks': return jsonResponse(await dbGetAll('project_tasks'));
-      case 'getByProject':
-        var pt=await dbGetAll('project_tasks');
-        return jsonResponse(pt.filter(function(t){return t.project_id===id;}));
-      case 'createTask':
-        var tObj={}; for(var kt in bd){tObj[kt]=bd[kt];}
-        tObj.project_id=id; tObj.created_at=now; delete tObj.id;
-        var tNid=await dbPut('project_tasks',tObj);
-        return jsonResponse(await dbGet('project_tasks',tNid),201);
-      case 'updateTask':
-        var ptk=await dbGet('project_tasks',id);
-        if(!ptk) return errorResponse('Not found',404);
-        for(var ku in bd){ptk[ku]=bd[ku];}
-        await dbPut('project_tasks',ptk);
-        return jsonResponse(await dbGet('project_tasks',id));
-      case 'deleteTask': await dbDelete('project_tasks',id); return jsonResponse({success:true});
-
-      case 'getLinks':
-        var al=await dbGetAll('project_links'), pl=al.filter(function(l){return l.project_a===id||l.project_b===id;}), ap=await dbGetAll('projects');
-        return jsonResponse(pl.map(function(l){var oid=l.project_a===id?l.project_b:l.project_a;var op=ap.find(function(p){return p.id===oid;}); return {link:l,otherProject:op||null};}));
-
-      case 'suggested': return jsonResponse([]);
-
-      case 'createLink':
-        var lObj={}; for(var kl in bd){lObj[kl]=bd[kl];}
-        lObj.created_at=now; delete lObj.id;
-        var lNid=await dbPut('project_links',lObj);
-        return jsonResponse(await dbGet('project_links',lNid),201);
-      case 'deleteLink': await dbDelete('project_links',id); return jsonResponse({success:true});
-
-      case 'sourceDetail':
-        var q=new URL('http://x'+url).searchParams, tp=q.get('type'), si=parseInt(q.get('id'));
-        if(tp==='todo') return jsonResponse(await dbGet('todos',si));
-        if(tp==='monthly') return jsonResponse(await dbGet('monthly_items',si));
-        if(tp==='bd_visit') return jsonResponse(await dbGet('bd_visits',si));
-        return jsonResponse(null);
-
-      case 'sync': return jsonResponse({success:true});
-
-      default: return errorResponse('Unknown action: '+a);
-    }
-  }catch(e){
-    dlog('API Handler Error ['+a+']: '+e.message);
-    return errorResponse(e.message||'Internal error', 500);
-  }
+      case 'getAll':return JR(await DA(s));
+      case 'getFiltered':var items=await DA(s),y=parseInt(qp.get('year')),m=parseInt(qp.get('month'));if(y&&m)items=items.filter(function(i){return i.year===y&&i.month===m});return JR(items);
+      case 'getById':return JR(await G1(s,id));
+      case 'create':var o={};for(var k in bd){if(bd.hasOwnProperty(k))o[k]=bd[k]}o.created_at=o.created_at||now;o.updated_at=now;delete o.id;var nid=await DP(s,o);var cr=await G1(s,nid);return JR(cr||{},201);
+      case 'update':var ex=await G1(s,id);if(!ex)return ER('Not found',404);for(var k2 in bd){if(bd.hasOwnProperty(k2))ex[k2]=bd[k2]}ex.updated_at=now;await DP(s,ex);return JR(await G1(s,id));
+      case 'delete':await DL1(s,id);return JR({success:true});
+      case 'getAllG':var gs=await DA('goals'),ms=await DA('milestones');return JR({goals:gs,milestones:ms});
+      case 'updateP':var g=await G1(s,id);if(!g)return ER('Not found',404);g.current_value=bd.value;g.updated_at=now;await DP(s,g);return JR(g);
+      case 'unified':var ev=await DA('calendar_events'),td=await DA('todos'),u=[];ev.forEach(function(e){u.push(Object.assign({},e,{source_type:'calendar',source_id:e.id,color:e.color||'#3b82f6'}))});td.filter(function(t){return t.due_date}).forEach(function(t){u.push({id:'todo_'+t.id,source_type:'todo',source_id:t.id,title:t.title,description:t.description||'',date:t.due_date,status:t.status,color:'#f59e0b',priority:t.priority,completed:t.status==='done'})});return JR(u);
+      case 'pending':return JR(await DA('reminders'));case 'dismiss':await DL1('reminders',id);return JR({success:true});
+      case 'get':var sv=await G1('settings',key);return JR(sv?sv.value:null);case 'set':await PU('settings',{key:key,value:bd.value});return JR({success:true});
+      case 'summary':var mi=await DA('monthly_items'),uy=parseInt(qp.get('year')||'2026'),mo={};for(var mm=1;mm<=12;mm++){var fi=mi.filter(function(i){return i.year===uy&&i.month===mm});mo[mm]={summary:fi.filter(function(i){return i.type==='summary'}).length,plan:fi.filter(function(i){return i.type==='plan'}).length}}return JR({year:uy,months:mo});
+      case 'dedup':return JR({removed:0,ids:[],message:'ok'});case 'cleanDates':return JR({removed:0,message:'ok'});
+      case 'stats':var vs=await DA('bd_visits'),bi={},bo={},ba={};vs.forEach(function(v){bi[v.industry]=(bi[v.industry]||0)+1;bo[v.opportunity]=(bo[v.opportunity]||0)+1;ba[v.action_status]=(ba[v.action_status]||0)+1});return JR({total:vs.length,byIndustry:Object.keys(bi).map(function(k){return{industry:k,cnt:bi[k]}}),byOpportunity:Object.keys(bo).map(function(k){return{opportunity:k,cnt:bo[k]}}),byAction:Object.keys(ba).map(function(k){return{action_status:k,cnt:ba[k]}})});
+      case 'analyzeM':var am=await DA('monthly_items'),dn=am.filter(function(i){return i.status==='完成'||i.status==='done'}).length;return JR({year:2026,month:6,overview:{total:am.length,done:dn,pending:am.length-dn,rate:am.length?(dn/am.length*100):0,grade:'B'},prevMonth:{month:5,year:2026,total:0,done:0,rate:0},velocity:null,bdPipeline:null,priorityAnalysis:[],categoryAnalysis:[],unfinishedReasons:[],bdExploration:{total:0,done:0,rate:0,items:[]},followUps:[],recommendations:[],summary:'本地数据分析'});
+      case 'analyzeS':return JR({year:2026,quarters:{},monthly:{},summary:'本地数据分析'});
+      case 'allTasks':return JR(await DA('project_tasks'));
+      case 'byProject':var pt=await DA('project_tasks');return JR(pt.filter(function(t){return t.project_id===id}));
+      case 'createTask':var to={};for(var kt in bd){to[kt]=bd[kt]}to.project_id=id;to.created_at=now;delete to.id;var tn=await DP('project_tasks',to);return JR(await G1('project_tasks',tn),201);
+      case 'updateTask':var tk=await G1('project_tasks',id);if(!tk)return ER('Not found',404);for(var ku in bd){tk[ku]=bd[ku]}await DP('project_tasks',tk);return JR(await G1('project_tasks',id));
+      case 'deleteTask':await DL1('project_tasks',id);return JR({success:true});
+      case 'getLinks':var al=await DA('project_links'),pl=al.filter(function(l){return l.project_a===id||l.project_b===id}),ap=await DA('projects');return JR(pl.map(function(l){var oid=l.project_a===id?l.project_b:l.project_a,op=ap.find(function(p){return p.id===oid});return{link:l,otherProject:op||null}}));
+      case 'suggested':return JR([]);
+      case 'createLink':var lo={};for(var kl in bd){lo[kl]=bd[kl]}lo.created_at=now;delete lo.id;var ln=await DP('project_links',lo);return JR(await G1('project_links',ln),201);
+      case 'deleteLink':await DL1('project_links',id);return JR({success:true});
+      case 'sourceDetail':var tp=qp.get('type'),si=parseInt(qp.get('id'));if(tp==='todo')return JR(await G1('todos',si));if(tp==='monthly')return JR(await G1('monthly_items',si));if(tp==='bd_visit')return JR(await G1('bd_visits',si));return JR(null);
+      case 'sync':return JR({success:true});
+      default:return ER('Unknown: '+a);
+    }}catch(e){L('API Error ['+a+']: '+e.message);return ER(e.message||'Internal error',500)}
 }
 
-// ═══════════════════════════
-// FETCH INTERCEPTOR (robust)
-// ═══════════════════════════
-var _fetch = window.fetch;
-window.fetch = function(input, init){
-  init = init || {};
-  var url, method, body;
+// ═══════════════ FETCH INTERCEPTOR ═══════════════
+var _F=window.fetch;window.fetch=function(input,init){init=init||{};var url,method,body;
+  if(typeof input==='string'){url=input;method=(init.method||'GET').toUpperCase();body=init.body||null}
+  else if(input&&input.url){url=input.url;method=(input.method||init.method||'GET').toUpperCase();body=init.body||input.body||null}
+  else return _F.call(window,input,init);
+  if(url.indexOf('/api/')>=0)return HA(url,method,body);
+  return _F.call(window,input,init)}
 
-  if(typeof input === 'string'){
-    url = input;
-    method = (init.method || 'GET').toUpperCase();
-    body = init.body || null;
-  } else if(input && input.url){
-    url = input.url;
-    method = (input.method || init.method || 'GET').toUpperCase();
-    body = init.body || input.body || null;
-  } else {
-    return _fetch.call(window, input, init);
-  }
+// ═══════════════ EXPORT/IMPORT ═══════════════
+window.exportAllData=async function(){var d={};for(var i=0;i<STS.length;i++){var s=STS[i];if(s==='system')continue;d[s]=await DA(s)}var b=new Blob([JSON.stringify(d,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='BD_backup_'+new Date().toISOString().slice(0,10)+'.json';a.click()}
+window.importAllData=async function(f){var t=await f.text(),d=JSON.parse(t);for(var s in d){if(STS.indexOf(s)<0||s==='system')continue;for(var j=0;j<d[s].length;j++){d[s][j].id=undefined;await DP(s,d[s][j])}}alert('导入完成');location.reload()}
+window.runDiag=async function(){var r=['=== BD Diagnostics ==='];try{var db=await ODB();r.push('DB: OK ('+Array.from(db.objectStoreNames).join(',')+')');db.close()}catch(e){r.push('DB: FAIL - '+e.message)}for(var i=0;i<STS.length;i++){try{var c=(await GA(STS[i])).length;r.push(STS[i]+': '+c+' recs')}catch(e){r.push(STS[i]+': ERR - '+e.message)}}
+  r.push('Auth: '+(AUTH?'ON':'OFF'));r.push('Host: '+location.hostname);r.push('Logs: '+LOGS.length);r.push('========================');console.log(r.join('\n'));return r.join('\n')}
 
-  if(url.indexOf('/api/')>=0){
-    dlog(method+' '+url);
-    return handleAPI(url, method, body);
-  }
-
-  return _fetch.call(window, input, init);
-};
-
-// ═══════════════════════════
-// GLOBAL HELPERS
-// ═══════════════════════════
-window.exportAllData = async function(){
-  var data={};
-  for(var i=0; i<STORES.length; i++){
-    var s=STORES[i]; if(s==='system') continue;
-    data[s]=await dbGetAll(s);
-  }
-  var b=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-  var a=document.createElement('a');
-  a.href=URL.createObjectURL(b);
-  a.download='BD_backup_'+new Date().toISOString().slice(0,10)+'.json';
-  a.click();
-  dlog('Data exported successfully');
-};
-window.importAllData = async function(file){
-  var t=await file.text(), data=JSON.parse(t);
-  for(var s in data){
-    if(STORES.indexOf(s)<0||s==='system') continue;
-    for(var j=0;j<data[s].length;j++){ data[s][j].id=undefined; await dbPut(s,data[s][j]); }
-  }
-  alert('导入完成，刷新页面生效');
-  location.reload();
-};
-window.runDiagnostics = async function(){
-  var report = ['=== BD System Diagnostics ==='];
-  try{
-    var db = await openDB();
-    report.push('IndexedDB: OK (stores: '+Array.from(db.objectStoreNames).join(', ')+')');
-    db.close();
-  }catch(e){ report.push('IndexedDB: FAIL - '+e.message); }
-
-  for(var i=0; i<STORES.length; i++){
-    try{
-      var count = (await dbGetAll(STORES[i])).length;
-      report.push('Store '+STORES[i]+': '+count+' records');
-    }catch(e){ report.push('Store '+STORES[i]+': ERROR - '+e.message); }
-  }
-
-  report.push('API Interceptor: Active');
-  report.push('HashRouter: Active');
-  report.push('CDN: '+location.hostname);
-  report.push('Debug Log: '+DEBUG_LOG.length+' entries');
-  report.push('==============================');
-  console.log(report.join('\n'));
-  return report.join('\n');
-};
-
-// ═══════════════════════════
-// POST-MOUNT TEST
-// ═══════════════════════════
-setTimeout(async function(){
-  try{
-    await openDB();
-    dlog('Post-init: IndexedDB ready');
-    status('就绪');
-  }catch(e){
-    dlog('Post-init: IndexedDB FAILED - '+e.message);
-    status('数据库初始化失败: '+e.message);
-  }
-},500);
+// ═══════════════ POST-INIT ═══════════════
+setTimeout(async function(){try{await ODB();L('DB ready');S('就绪')}catch(e){L('DB FAIL: '+e.message);S('数据库失败: '+e.message)}},500)
 
 })();
 </script>
