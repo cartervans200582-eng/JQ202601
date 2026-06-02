@@ -72,7 +72,9 @@ setTimeout(function(){
 // Watch React mount
 var obs=new MutationObserver(function(){var r=document.getElementById('root');if(r&&r.children.length>0){S('渲染完成');setTimeout(function(){PL.classList.add('done');setTimeout(function(){PL.style.display='none';},400);
   // Fix scroll-to-top button after React renders
-  setTimeout(function(){var btns=document.querySelectorAll('[title="顶部"]');btns.forEach(function(b){var orig=b.onclick;b.onclick=function(){window.scrollTo({top:0,behavior:'smooth'});var c=document.querySelector('.min-h-screen');if(c)c.scrollTo({top:0,behavior:'smooth'});var m=document.querySelector('main');if(m)m.scrollTo({top:0,behavior:'smooth'})}});L('Scroll fix applied: '+btns.length+' buttons')},800);
+  setTimeout(function(){var btns=document.querySelectorAll('[title="顶部"]');btns.forEach(function(b){var orig=b.onclick;b.onclick=function(){window.scrollTo({top:0,behavior:'smooth'});var c=document.querySelector('.min-h-screen');if(c)c.scrollTo({top:0,behavior:'smooth'});var m=document.querySelector('main');if(m)m.scrollTo({top:0,behavior:'smooth'})}});L('Scroll fix: '+btns.length+' btns')},800);
+  // Fix mobile nav active state for /report and /goals
+  setTimeout(function(){var p=location.pathname+location.hash;document.querySelectorAll('nav button').forEach(function(b){var to=(b.getAttribute('data-to')||'');if(to&&p.indexOf(to)>=0){b.style.color='#2563eb';b.querySelector('span:last-child')&&(b.querySelector('span:last-child').style.color='#2563eb')}});L('Mobile nav fix applied')},1000);
 },200);obs.disconnect();L('React mounted');}});
 obs.observe(document.getElementById('root'),{childList:true,subtree:true});
 
@@ -153,7 +155,7 @@ function GP(url){try{return new URL('http://x'+url).searchParams}catch(e){return
 // ═══════════════ ROUTE MATCHER ═══════════════
 function MR(url,method){var p=url.replace(/\/api/,''),m;
   if(method==='GET'&&p==='/todos')return{s:'todos',a:'getAll'};if(method==='POST'&&p==='/todos')return{s:'todos',a:'create'};m=p.match(/^\/todos\/(\d+)$/);if(m)return{s:'todos',a:method==='PUT'?'update':'delete',id:parseInt(m[1])};
-  if(method==='GET'&&p==='/calendar/events')return{s:'calendar_events',a:'getAll'};if(method==='POST'&&p==='/calendar/events')return{s:'calendar_events',a:'create'};m=p.match(/^\/calendar\/events\/(\d+)$/);if(m)return{s:'calendar_events',a:method==='PUT'?'update':'delete',id:parseInt(m[1])};if(method==='GET'&&p.indexOf('/calendar/unified')===0)return{s:'calendar_events',a:'unified'};if(method==='PUT'&&p==='/calendar/sync-source')return{s:'calendar_events',a:'sync'};if(method==='GET'&&p.indexOf('/calendar/source-detail')===0)return{s:'calendar_events',a:'sourceDetail'};
+  if(method==='GET'&&p==='/calendar/events')return{s:'calendar_events',a:'getFilteredCal'};if(method==='POST'&&p==='/calendar/events')return{s:'calendar_events',a:'create'};m=p.match(/^\/calendar\/events\/(\d+)$/);if(m)return{s:'calendar_events',a:method==='PUT'?'update':'delete',id:parseInt(m[1])};if(method==='GET'&&p.indexOf('/calendar/unified')===0)return{s:'calendar_events',a:'unified'};if(method==='PUT'&&p==='/calendar/sync-source')return{s:'calendar_events',a:'sync'};if(method==='GET'&&p.indexOf('/calendar/source-detail')===0)return{s:'calendar_events',a:'sourceDetail'};
   if(method==='GET'&&p==='/goals')return{s:'goals',a:'getAllG'};if(method==='POST'&&p==='/goals')return{s:'goals',a:'create'};m=p.match(/^\/goals\/(\d+)$/);if(m)return{s:'goals',a:method==='PUT'?'update':'delete',id:parseInt(m[1])};m=p.match(/^\/goals\/(\d+)\/progress$/);if(m)return{s:'goals',a:'updateP',id:parseInt(m[1])};if(method==='POST'&&p==='/goals/milestones')return{s:'milestones',a:'create'};m=p.match(/^\/goals\/milestones\/(\d+)$/);if(m)return{s:'milestones',a:method==='PUT'?'update':'delete',id:parseInt(m[1])};
   if(method==='GET'&&p.indexOf('/reminders/pending')===0)return{s:'reminders',a:'pending'};m=p.match(/^\/reminders\/(\d+)\/dismiss$/);if(m)return{s:'reminders',a:'dismiss',id:parseInt(m[1])};
   if(method==='GET'&&p==='/projects/all-tasks')return{s:'project_tasks',a:'allTasks'};if(method==='GET'&&p==='/projects')return{s:'projects',a:'getAll'};if(method==='POST'&&p==='/projects')return{s:'projects',a:'create'};m=p.match(/^\/projects\/(\d+)\/tasks$/);if(m)return{s:'project_tasks',a:method==='GET'?'byProject':'createTask',id:parseInt(m[1])};m=p.match(/^\/projects\/(\d+)\/links$/);if(m)return{s:'project_links',a:'getLinks',id:parseInt(m[1])};m=p.match(/^\/projects\/(\d+)\/suggested-links$/);if(m)return{s:'project_links',a:'suggested',id:parseInt(m[1])};m=p.match(/^\/projects\/(\d+)$/);if(m)return{s:'projects',a:method==='GET'?'getById':(method==='PUT'?'update':'delete'),id:parseInt(m[1])};m=p.match(/^\/projects\/tasks\/(\d+)$/);if(m)return{s:'project_tasks',a:method==='PUT'?'updateTask':'deleteTask',id:parseInt(m[1])};if(method==='POST'&&p==='/projects/links')return{s:'project_links',a:'createLink'};m=p.match(/^\/projects\/links\/(\d+)$/);if(m)return{s:'project_links',a:'deleteLink',id:parseInt(m[1])};
@@ -173,6 +175,7 @@ async function HA(url,method,body){
 
     switch(a){
       case 'getAll':return JR(await DA(s));
+      case 'getFilteredCal':var ce=await DA('calendar_events'),st=qp.get('start'),en=qp.get('end');if(st&&en)ce=ce.filter(function(e){return e.event_date>=st&&e.event_date<=en});return JR(ce);
       case 'getFiltered':var items=await DA(s),y=parseInt(qp.get('year')),m=parseInt(qp.get('month'));if(y&&m)items=items.filter(function(i){return i.year===y&&i.month===m});return JR(items);
       case 'getById':return JR(await G1(s,id));
       case 'create':var o={};for(var k in bd){if(bd.hasOwnProperty(k))o[k]=bd[k]}o.created_at=o.created_at||now;o.updated_at=now;delete o.id;var nid=await DP(s,o);var cr=await G1(s,nid);return JR(cr||{},201);
@@ -180,7 +183,9 @@ async function HA(url,method,body){
       case 'delete':await DL1(s,id);return JR({success:true});
       case 'getAllG':var gs=await DA('goals'),ms=await DA('milestones');return JR({goals:gs,milestones:ms});
       case 'updateP':var g=await G1(s,id);if(!g)return ER('Not found',404);g.current_value=bd.value;g.updated_at=now;await DP(s,g);return JR(g);
-      case 'unified':var ev=await DA('calendar_events'),td=await DA('todos'),u=[];ev.forEach(function(e){u.push(Object.assign({},e,{source_type:'calendar',source_id:e.id,color:e.color||'#3b82f6'}))});td.filter(function(t){return t.due_date}).forEach(function(t){u.push({id:'todo_'+t.id,source_type:'todo',source_id:t.id,title:t.title,description:t.description||'',date:t.due_date,status:t.status,color:'#f59e0b',priority:t.priority,completed:t.status==='done'})});return JR(u);
+      case 'unified':var ev=await DA('calendar_events'),td=await DA('todos'),ust=qp.get('start'),uen=qp.get('end');
+        if(ust&&uen){ev=ev.filter(function(e){return e.event_date>=ust&&e.event_date<=uen});td=td.filter(function(t){return t.due_date&&t.due_date>=ust&&t.due_date<=uen})}
+        var u=[];ev.forEach(function(e){u.push(Object.assign({},e,{source_type:'calendar',source_id:e.id,color:e.color||'#3b82f6'}))});td.filter(function(t){return t.due_date}).forEach(function(t){u.push({id:'todo_'+t.id,source_type:'todo',source_id:t.id,title:t.title,description:t.description||'',date:t.due_date,status:t.status,color:'#f59e0b',priority:t.priority,completed:t.status==='done'})});return JR(u);
       case 'pending':return JR(await DA('reminders'));case 'dismiss':await DL1('reminders',id);return JR({success:true});
       case 'get':var sv=await G1('settings',key);return JR(sv?sv.value:null);case 'set':await PU('settings',{key:key,value:bd.value});return JR({success:true});
       case 'summary':var mi=await DA('monthly_items'),uy=parseInt(qp.get('year')||'2026'),mo={};for(var mm=1;mm<=12;mm++){var fi=mi.filter(function(i){return i.year===uy&&i.month===mm});mo[mm]={summary:fi.filter(function(i){return i.type==='summary'}).length,plan:fi.filter(function(i){return i.type==='plan'}).length}}return JR({year:uy,months:mo});
@@ -225,6 +230,23 @@ window.exportAllData=async function(){var d={};for(var i=0;i<STS.length;i++){var
 window.importAllData=async function(f){var t=await f.text(),d=JSON.parse(t);for(var s in d){if(STS.indexOf(s)<0||s==='system')continue;for(var j=0;j<d[s].length;j++){d[s][j].id=undefined;await DP(s,d[s][j])}}alert('导入完成');location.reload()}
 window.runDiag=async function(){var r=['=== BD Diagnostics ==='];try{var db=await ODB();r.push('DB: OK ('+Array.from(db.objectStoreNames).join(',')+')');db.close()}catch(e){r.push('DB: FAIL - '+e.message)}for(var i=0;i<STS.length;i++){try{var c=(await GA(STS[i])).length;r.push(STS[i]+': '+c+' recs')}catch(e){r.push(STS[i]+': ERR - '+e.message)}}
   r.push('Auth: '+(AUTH?'ON':'OFF'));r.push('Host: '+location.hostname);r.push('Logs: '+LOGS.length);r.push('========================');console.log(r.join('\n'));return r.join('\n')}
+
+// Sample data generator for testing
+window.genSampleData=async function(){
+  var y=2026,m=6;
+  var visits=[{target_name:'BioPharm Inc.',industry:'创新药',visit_date:y+'-0'+m+'-05',source:'行业会议',confidence:'高',profit_model:'License-out',one_liner:'新型双抗ADC平台',opportunity:'BD项目',action_status:'跟进中',created_at:NO(),updated_at:NO()},
+    {target_name:'GeneTech Labs',industry:'基因治疗',visit_date:y+'-0'+m+'-12',source:'FA推荐',confidence:'中',profit_model:'NewCo',one_liner:'AAV载体基因治疗',opportunity:'BD项目',action_status:'待评估',created_at:NO(),updated_at:NO()}];
+  for(var i=0;i<visits.length;i++)await DP('bd_visits',visits[i]);
+  var items=[{year:y,month:m,type:'summary',category:'BD项目',content:'完成Astra-Tech项目TS条款谈判',status:'已完成',bd_stage:'TS谈判',responsible_person:'BD VP',reviewer:'CEO',created_at:NO(),updated_at:NO()},
+    {year:y,month:m,type:'summary',category:'BD项目',content:'拜访3家创新药企进行标的筛选',status:'已完成',created_at:NO(),updated_at:NO()},
+    {year:y,month:m,type:'plan',category:'BD项目',content:'推进BioPharm项目进入尽调阶段',status:'进行中',due_date:y+'-0'+(m+1)+'-15',created_at:NO(),updated_at:NO()},
+    {year:y,month:m,type:'summary',category:'资本项目',content:'完成916-II交割后管理报告',status:'已完成',created_at:NO(),updated_at:NO()},
+    {year:y,month:m,type:'plan',category:'资本项目',content:'准备Q3资本项目沙盘推演',status:'进行中',created_at:NO(),updated_at:NO()}];
+  for(var j=0;j<items.length;j++)await DP('monthly_items',items[j]);
+  var projects=[{name:'BD2026-001 BioPharm双抗ADC',code:'BD2026-001',category:'BD项目',description:'新型双抗ADC平台技术引进',status:'active',bd_stage:'尽职调查',source:'行业会议',overview:'标的为US-based biotech，拥有FIC双抗ADC平台 [关键词:ADC,双抗,license,引进]',responsible_person:'BD VP',reviewer:'CEO',created_at:NO(),updated_at:NO()}];
+  for(var k=0;k<projects.length;k++)await DP('projects',projects[k]);
+  console.log('Sample data generated: '+visits.length+' visits, '+items.length+' monthly items, '+projects.length+' projects');
+  return'Generated. Refresh to see data.'};
 
 // ═══════════════ POST-INIT ═══════════════
 setTimeout(async function(){try{await ODB();L('DB ready');S('就绪')}catch(e){L('DB FAIL: '+e.message);S('数据库失败: '+e.message)}},500)
