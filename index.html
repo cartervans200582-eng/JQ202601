@@ -48,7 +48,7 @@ body{margin:0;overflow:hidden;user-select:none;-webkit-user-select:none;font-fam
     <div class="er" id="le"></div>
     <button class="btn bl" id="bl" onclick="DL()">登录</button>
     <button class="btn bq" id="bq" onclick="TQ()">扫码登录</button>
-    <div id="qb" style="display:none"><canvas id="qc" width="220" height="220"></canvas><p class="qh">手机扫描即可登录 (5分钟内有效)</p></div>
+    <div id="qb" style="display:none"><canvas id="qc" width="220" height="220"></canvas><p class="qh">点击二维码复制链接，在手机浏览器打开即可登录</p></div>
     <div class="tm"><a id="ts" onclick="TS()">首次使用？设置主密码</a></div>
   </div>
 </div>
@@ -116,7 +116,17 @@ function TS(f){var s=document.getElementById('bl').classList.contains('bs');
 var QTIM=null;
 async function TQ(){var b=document.getElementById('qb');if(b.style.display==='none'){var h=await SG('password_hash');if(!h){document.getElementById('le').textContent='请先设置密码';return}
   var e=new TextEncoder(),n=Math.floor(Date.now()/QT),km=await crypto.subtle.importKey('raw',e.encode(h),{name:'HMAC',hash:'SHA-256'},false,['sign']);var s=await crypto.subtle.sign('HMAC',km,e.encode(String(n)));var t=btoa(String.fromCharCode.apply(null,new Uint8Array(s))).replace(/[+/=]/g,'');var url=location.origin+location.pathname+'#login='+t+'.'+n;
-  var c=document.getElementById('qc'),ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,220,220);ctx.fillStyle='#000';var sz=6,mg=8;for(var i=0;i<url.length;i++){var cc=url.charCodeAt(i),x=mg+(i%34)*sz,y=mg+Math.floor(i/34)*sz;ctx.fillStyle='#'+((cc*2654435761)>>>0).toString(16).padStart(6,'0').slice(0,6);ctx.fillRect(x,y,sz-1,sz-1)}ctx.fillStyle='#000';ctx.font='9px monospace';ctx.fillText('QR login token',8,218);
+  var c=document.getElementById('qc'),ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,220,220);ctx.fillStyle='#1e293b';ctx.fillRect(10,10,200,200);
+  ctx.fillStyle='#fff';ctx.fillRect(30,30,160,160);
+  ctx.fillStyle='#1e293b';ctx.font='bold 13px monospace';ctx.textAlign='center';
+  ctx.fillText('扫码登录',110,80);
+  ctx.font='9px monospace';ctx.fillText(url.substring(0,32),110,105);
+  ctx.fillText(url.substring(32,64),110,118);
+  ctx.fillText(url.substring(64,96),110,131);
+  ctx.font='bold 11px monospace';ctx.fillStyle='#3b82f6';ctx.fillText('复制链接 →',110,165);
+  b.style.display='block';
+  // Click QR to copy URL
+  c.style.cursor='pointer';c.title='点击复制登录链接';c.onclick=function(){navigator.clipboard.writeText(url).then(function(){document.getElementById('le').textContent='链接已复制！在手机浏览器打开即可登录'});};
   b.style.display='block';if(QTIM)clearInterval(QTIM);QTIM=setInterval(function(){if(b.style.display==='none'){clearInterval(QTIM)}},120000)}else{b.style.display='none';if(QTIM){clearInterval(QTIM);QTIM=null}}}
 async function CQ(){var h=location.hash;if(h&&h.indexOf('#login=')===0){var d=h.slice(7),p=d.split('.'),t=p[0],ts=parseInt(p[1]),n=Math.floor(Date.now()/QT);if(Math.abs(n-ts)<=1){var ph=await SG('password_hash');if(ph){var e=new TextEncoder(),km=await crypto.subtle.importKey('raw',e.encode(ph),{name:'HMAC',hash:'SHA-256'},false,['sign']);var s=await crypto.subtle.sign('HMAC',km,e.encode(String(ts)));var ex=btoa(String.fromCharCode.apply(null,new Uint8Array(s))).replace(/[+/=]/g,'');if(t===ex){location.hash='';var sk=await DK(ph,e.encode('QR-SESSION'));EK=sk;await SS('qr_session_key',await EN(sk,ph));await LAUNCH();return true}}}location.hash=''}return false}
 async function LAUNCH(){AUTH=true;document.getElementById('lo').style.display='none';document.getElementById('root').style.display='flex';L('Authenticated')}
@@ -148,6 +158,7 @@ function MR(url,method){var p=url.replace(/\/api/,''),m;
   if(method==='GET'&&p.indexOf('/bd-visits/stats/summary')>=0)return{s:'bd_visits',a:'stats'};m=p.match(/^\/bd-visits\/(\d+)$/);if(m)return{s:'bd_visits',a:method==='GET'?'getById':(method==='PUT'?'update':'delete'),id:parseInt(m[1])};if(method==='GET'&&p.indexOf('/bd-visits')===0&&p.split('/').length<=2)return{s:'bd_visits',a:'getAll'};if(method==='POST'&&p==='/bd-visits')return{s:'bd_visits',a:'create'};
   m=p.match(/^\/settings\/(.+)$/);if(m)return{s:'settings',a:method==='GET'?'get':'set',key:m[1]};
   if(method==='GET'&&p.indexOf('/analyze/monthly')>=0)return{s:'monthly_items',a:'analyzeM'};if(method==='GET'&&p.indexOf('/analyze/sequential')>=0)return{s:'monthly_items',a:'analyzeS'};
+  if(method==='GET'&&p.match(/^\/projects\/(\d+)\/related-history/))return{s:'projects',a:'relatedHistory'};
   return null}
 
 // ═══════════════ API HANDLER ═══════════════
@@ -172,7 +183,9 @@ async function HA(url,method,body){
       case 'summary':var mi=await DA('monthly_items'),uy=parseInt(qp.get('year')||'2026'),mo={};for(var mm=1;mm<=12;mm++){var fi=mi.filter(function(i){return i.year===uy&&i.month===mm});mo[mm]={summary:fi.filter(function(i){return i.type==='summary'}).length,plan:fi.filter(function(i){return i.type==='plan'}).length}}return JR({year:uy,months:mo});
       case 'dedup':return JR({removed:0,ids:[],message:'ok'});case 'cleanDates':return JR({removed:0,message:'ok'});
       case 'stats':var vs=await DA('bd_visits'),bi={},bo={},ba={};vs.forEach(function(v){bi[v.industry]=(bi[v.industry]||0)+1;bo[v.opportunity]=(bo[v.opportunity]||0)+1;ba[v.action_status]=(ba[v.action_status]||0)+1});return JR({total:vs.length,byIndustry:Object.keys(bi).map(function(k){return{industry:k,cnt:bi[k]}}),byOpportunity:Object.keys(bo).map(function(k){return{opportunity:k,cnt:bo[k]}}),byAction:Object.keys(ba).map(function(k){return{action_status:k,cnt:ba[k]}})});
-      case 'analyzeM':var am=await DA('monthly_items'),dn=am.filter(function(i){return i.status==='完成'||i.status==='done'}).length;return JR({year:2026,month:6,overview:{total:am.length,done:dn,pending:am.length-dn,rate:am.length?(dn/am.length*100):0,grade:'B'},prevMonth:{month:5,year:2026,total:0,done:0,rate:0},velocity:null,bdPipeline:null,priorityAnalysis:[],categoryAnalysis:[],unfinishedReasons:[],bdExploration:{total:0,done:0,rate:0,items:[]},followUps:[],recommendations:[],summary:'本地数据分析'});
+      case 'analyzeM':var am=await DA('monthly_items'),yr1=parseInt(qp.get('year')),mo1=parseInt(qp.get('month'));var fit=am.filter(function(i){return i.year===yr1&&i.month===mo1}),tdn=fit.filter(function(i){return i.status==='完成'||i.status==='done'}).length,prv=am.filter(function(i){return i.year===yr1&&i.month===mo1-1}),pd=prv.filter(function(i){return i.status==='完成'||i.status==='done'}).length;
+        var cats={},prios={};fit.forEach(function(i){cats[i.category]=(cats[i.category]||0)+1;var p=i.priority||0;prios[p]=(prios[p]||0)+1});
+        return JR({year:yr1,month:mo1,overview:{total:fit.length,done:tdn,pending:fit.length-tdn,rate:fit.length?(tdn/fit.length*100):0,grade:tdn>=fit.length*.8?'A':tdn>=fit.length*.5?'B':'C'},prevMonth:{month:mo1-1,year:yr1,total:prv.length,done:pd,rate:prv.length?(pd/prv.length*100):0},velocity:{change:prv.length?((fit.length-prv.length)/prv.length*100):0,trend:fit.length>prv.length?'up':fit.length<prv.length?'down':'stable'},bdPipeline:[],priorityAnalysis:[{level:0,label:'无',total:prios[0]||0,done:0,rate:0},{level:1,label:'低',total:prios[1]||0,done:0,rate:0},{level:2,label:'中',total:prios[2]||0,done:0,rate:0},{level:3,label:'高',total:prios[3]||0,done:0,rate:0}],categoryAnalysis:Object.keys(cats).map(function(c){var cd=fit.filter(function(i){return i.category===c&&(i.status==='完成'||i.status==='done')}).length;return{category:c,total:cats[c],done:cd,rate:cats[c]?(cd/cats[c]*100):0,pending:cats[c]-cd}}),unfinishedReasons:fit.filter(function(i){return i.status!=='完成'&&i.status!=='done'}).map(function(i){return i.completion_note||i.content||''}).filter(Boolean).slice(0,10),bdExploration:{total:0,done:0,rate:0,items:[]},followUps:fit.filter(function(i){return i.status&&i.status!=='完成'&&i.status!=='done'}).slice(0,8).map(function(i){return{content:i.content,category:i.category,priority:i.priority||0,due_date:i.due_date}}),recommendations:tdn<fit.length*.5?['完成率偏低，建议优先推进核心项目']:['各项工作推进良好，继续保持'],summary:yr1+'年'+mo1+'月共'+fit.length+'项工作，完成'+tdn+'项，完成率'+Math.round(tdn/fit.length*100)+'%'});
       case 'analyzeS':return JR({year:2026,quarters:{},monthly:{},summary:'本地数据分析'});
       case 'allTasks':return JR(await DA('project_tasks'));
       case 'byProject':var pt=await DA('project_tasks');return JR(pt.filter(function(t){return t.project_id===id}));
@@ -185,6 +198,13 @@ async function HA(url,method,body){
       case 'deleteLink':await DL1('project_links',id);return JR({success:true});
       case 'sourceDetail':var tp=qp.get('type'),si=parseInt(qp.get('id'));if(tp==='todo')return JR(await G1('todos',si));if(tp==='monthly')return JR(await G1('monthly_items',si));if(tp==='bd_visit')return JR(await G1('bd_visits',si));return JR(null);
       case 'sync':return JR({success:true});
+      case 'relatedHistory':var allM=await DA('monthly_items'),allT=await DA('project_tasks'),allTD=await DA('todos'),kw=(qp.get('keywords')||'').split(/[,，\s]+/).filter(function(k){return k.length>=2}),yr=parseInt(qp.get('year')),mo=parseInt(qp.get('month'));var tl=[];
+        for(var mi=0;mi<allM.length;mi++){var item=allM[mi];if(item.year>yr||(item.year===yr&&item.month>mo))continue;var match=kw.length===0||kw.some(function(k){return(item.content||'').indexOf(k)>=0||(item.category||'').indexOf(k)>=0});if(match)tl.push({source:'monthly',id:item.id,content:item.content,category:item.category,status:item.status,due_date:item.due_date,year:item.year,month:item.month})}
+        for(var ti=0;ti<allT.length;ti++){var tsk=allT[ti];if(tsk.project_id!==id)continue;if(tsk.year>yr||(tsk.year===yr&&tsk.month>mo))continue;tl.push({source:'task',id:tsk.id,content:tsk.description||tsk.next_action||'',category:'任务',status:tsk.status||'',due_date:tsk.due_date,year:tsk.year,month:tsk.month})}
+        for(var di=0;di<allTD.length;di++){var td=allTD[di];var tdm=td.due_date?parseInt(td.due_date.slice(5,7)):mo,tdy=td.due_date?parseInt(td.due_date.slice(0,4)):yr;if(tdy>yr||(tdy===yr&&tdm>mo))continue;tl.push({source:'todo',id:td.id,content:td.title,category:'待办',status:td.status||'',due_date:td.due_date,year:tdy,month:tdm})}
+        tl.sort(function(a,b){return a.year!==b.year?a.year-b.year:a.month-b.month});
+        var groups=[];tl.forEach(function(i){var key=i.year+'年'+(i.month||'')+'月';var g=groups.find(function(x){return x.label===key});if(!g){g={label:key,items:[]};groups.push(g)}g.items.push(i)});
+        return JR({timeline:groups,keywords:kw.length>0?kw:['项目','进展','计划','完成','报告']});
       default:return ER('Unknown: '+a);
     }}catch(e){L('API Error ['+a+']: '+e.message);return ER(e.message||'Internal error',500)}
 }
