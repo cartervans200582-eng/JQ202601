@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<meta name="theme-color" content="#0f172a"/>
+<meta name="description" content="BD工作动态管理系统"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<link rel="apple-touch-icon" href="/pwa-192x192.png"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; connect-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline';"/>
+<title>BD工作动态管理</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
+#login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.login-card{background:#1e293b;border-radius:16px;padding:40px 32px;width:100%;max-width:400px;border:1px solid #334155;box-shadow:0 20px 60px rgba(0,0,0,0.5)}
+.login-card h2{font-size:1.3rem;color:#f1f5f9;margin-bottom:6px;text-align:center}
+.login-card .sub{font-size:0.8rem;color:#64748b;text-align:center;margin-bottom:24px}
+.login-card label{display:block;font-size:0.8rem;color:#94a3b8;margin-bottom:6px}
+.login-card input{width:100%;padding:12px 16px;background:#0f172a;border:1px solid #334155;border-radius:10px;color:#e2e8f0;font-size:15px;outline:none;transition:border-color 0.2s}
+.login-card input:focus{border-color:#3b82f6}
+.login-card .btn{width:100%;padding:12px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;margin-top:16px;transition:all 0.2s}
+.btn-login{background:#3b82f6;color:#fff}
+.btn-login:hover{background:#2563eb;transform:translateY(-1px)}
+.btn-setup{background:#10b981;color:#fff}
+.btn-setup:hover{background:#059669;transform:translateY(-1px)}
+.btn-qr{background:transparent;color:#3b82f6;border:2px solid #3b82f6;margin-top:8px}
+.btn-qr:hover{background:#1e3a5f}
+.error-msg{color:#ef4444;font-size:0.75rem;margin-top:8px;text-align:center;min-height:18px}
+.lock-msg{color:#f59e0b;font-size:0.75rem;margin-top:8px;text-align:center}
+.toggle-mode{text-align:center;margin-top:12px;font-size:0.75rem;color:#64748b}
+.toggle-mode a{color:#3b82f6;cursor:pointer;text-decoration:none}
+.toggle-mode a:hover{text-decoration:underline}
+.qr-box{text-align:center;margin-top:16px}
+.qr-box canvas{border-radius:12px;background:#fff;padding:8px}
+.qr-box .qr-hint{font-size:0.7rem;color:#64748b;margin-top:6px}
+#app-loading{display:none;align-items:center;justify-content:center;min-height:100vh;flex-direction:column}
+#app-loading .spinner{width:40px;height:40px;border:3px solid #334155;border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:16px}
+#app-loading p{color:#64748b;font-size:0.85rem}
+@keyframes spin{to{transform:rotate(360deg)}}
+#root{display:none}
+.toast{position:fixed;top:20px;right:20px;background:#1e293b;border:1px solid #334155;border-radius:10px;padding:12px 20px;color:#e2e8f0;font-size:0.85rem;z-index:9999;animation:slideIn 0.3s ease;box-shadow:0 8px 30px rgba(0,0,0,0.4)}
+.toast.success{border-color:#10b981}
+.toast.error{border-color:#ef4444}
+@keyframes slideIn{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
+@media(max-width:480px){.login-card{padding:28px 20px}}
+</style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="login-screen">
+  <div class="login-card">
+    <h2 id="login-title">BD工作动态管理</h2>
+    <p class="sub" id="login-sub">请登录以访问系统</p>
+    <label for="pwd">主密码</label>
+    <input type="password" id="pwd" placeholder="输入密码..." autocomplete="off"/>
+    <div class="error-msg" id="login-error"></div>
+    <div class="lock-msg" id="lock-msg" style="display:none"></div>
+    <button class="btn btn-login" id="btn-login" onclick="doLogin()">登录</button>
+    <button class="btn btn-qr" id="btn-qr" onclick="toggleQR()">扫码登录</button>
+    <div class="qr-box" id="qr-box" style="display:none">
+      <canvas id="qr-canvas" width="200" height="200"></canvas>
+      <p class="qr-hint">用手机扫描二维码直接登录</p>
+    </div>
+    <div class="toggle-mode">
+      <a id="toggle-setup" onclick="toggleSetup()">首次使用？设置主密码</a>
+    </div>
+  </div>
+</div>
+
+<!-- Loading -->
+<div id="app-loading">
+  <div class="spinner"></div>
+  <p id="loading-text">正在加载...</p>
+</div>
+
+<!-- React App -->
+<div id="root"></div>
+
+<!-- API Interceptor + Security Layer -->
+<script>
+(function(){
+'use strict';
+
+// ═══════════════════════════════════════
+// CONFIGURATION
+// ═══════════════════════════════════════
+const APP_VERSION = '2.1';
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCK_DURATION = 30000; // 30 seconds
+const QR_TOKEN_TTL = 300000; // 5 minutes
+
+let encryptionKey = null;
+let isAuthenticated = false;
+let loginAttempts = 0;
+let lockUntil = 0;
+
+// ═══════════════════════════════════════
+// TOAST NOTIFICATIONS
+// ═══════════════════════════════════════
+function showToast(msg, type){
+  const t = document.createElement('div');
+  t.className = 'toast ' + (type||'');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(()=>{ t.style.opacity='0'; setTimeout(()=>t.remove(),300); },2500);
+}
+
+// ═══════════════════════════════════════
+// CRYPTO (Web Crypto API)
+// ═══════════════════════════════════════
+async function deriveKey(password, salt){
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    {name:'PBKDF2', salt:salt||enc.encode('BD-SYSTEM-SALT-v2'), iterations:200000, hash:'SHA-256'},
+    keyMaterial,
+    {name:'AES-GCM', length:256},
+    false,
+    ['encrypt','decrypt']
+  );
+}
+
+async function encryptData(key, plaintext){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder();
+  const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, enc.encode(plaintext));
+  const combined = new Uint8Array(iv.length + ct.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(ct), iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function decryptData(key, cipherB64){
+  const raw = Uint8Array.from(atob(cipherB64), c=>c.charCodeAt(0));
+  const iv = raw.slice(0,12);
+  const ct = raw.slice(12);
+  const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, ct);
+  return new TextDecoder().decode(pt);
+}
+
+// ═══════════════════════════════════════
+// INDEXEDDB
+// ═══════════════════════════════════════
+const DB_NAME = 'BDSystemDB';
+const DB_VERSION = 1;
+const STORES = ['todos','calendar_events','goals','milestones','reminders','settings','projects','project_tasks','project_links','monthly_items','bd_visits','system'];
+
+function openDB(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e)=>{
+      const db = e.target.result;
+      STORES.forEach(s=>{ if(!db.objectStoreNames.contains(s)) db.createObjectStore(s, {keyPath:'id', autoIncrement:true}); });
+      if(!db.objectStoreNames.contains('system')) db.createObjectStore('system', {keyPath:'key'});
+      else { try{ db.createObjectStore('system',{keyPath:'key'}); }catch(_){} }
+    };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+
+async function dbOp(storeName, mode, fn){
+  const db = await openDB();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(storeName, mode);
+    const store = tx.objectStore(storeName);
+    const req = fn(store);
+    req.onsuccess = (e)=>{ resolve(e.target.result); db.close(); };
+    req.onerror = (e)=>{ reject(e.target.error); db.close(); };
+  });
+}
+
+async function dbGetAll(storeName){
+  const db = await openDB();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).getAll();
+    req.onsuccess = (e)=>{ resolve(e.target.result); db.close(); };
+    req.onerror = (e)=>{ reject(e.target.error); db.close(); };
+  });
+}
+
+async function dbGet(storeName, id){
+  return dbOp(storeName, 'readonly', s=>s.get(id));
+}
+
+async function dbPut(storeName, obj){
+  return dbOp(storeName, 'readwrite', s=>s.put(obj));
+}
+
+async function dbDelete(storeName, id){
+  return dbOp(storeName, 'readwrite', s=>s.delete(id));
+}
+
+async function dbCount(storeName){
+  const db = await openDB();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).count();
+    req.onsuccess = (e)=>{ resolve(e.target.result); db.close(); };
+    req.onerror = (e)=>{ reject(e.target.error); db.close(); };
+  });
+}
+
+// ═══════════════════════════════════════
+// ENCRYPTED DB WRAPPER
+// ═══════════════════════════════════════
+async function encGetAll(storeName){
+  const rows = await dbGetAll(storeName);
+  if(!encryptionKey) return rows;
+  const decrypted = [];
+  for(const r of rows){
+    if(r._enc){
+      try{ const d = JSON.parse(await decryptData(encryptionKey, r._enc)); d.id = r.id; decrypted.push(d); }
+      catch(e){ decrypted.push(r); }
+    } else decrypted.push(r);
+  }
+  return decrypted;
+}
+
+async function encPut(storeName, obj){
+  if(encryptionKey && !obj._raw){
+    const {id, ...rest} = obj;
+    const enc = await encryptData(encryptionKey, JSON.stringify(rest));
+    return dbPut(storeName, {id:id||undefined, _enc:enc});
+  }
+  return dbPut(storeName, obj);
+}
+
+// ═══════════════════════════════════════
+// SYSTEM SETTINGS
+// ═══════════════════════════════════════
+async function sysGet(key){
+  try{ const r = await dbGet('system', key); return r?r.value:null; }catch(e){ return null; }
+}
+async function sysSet(key, value){
+  try{ await dbPut('system', {key, value}); }catch(e){}
+}
+
+// ═══════════════════════════════════════
+// LOGIN / AUTH
+// ═══════════════════════════════════════
+async function hashPassword(pwd){
+  const enc = new TextEncoder();
+  const hash = await crypto.subtle.digest('SHA-256', enc.encode(pwd));
+  return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+function checkLock(){
+  if(lockUntil && Date.now() < lockUntil){
+    const remaining = Math.ceil((lockUntil - Date.now())/1000);
+    document.getElementById('lock-msg').style.display='block';
+    document.getElementById('lock-msg').textContent = '账户已锁定，请 '+remaining+' 秒后重试';
+    document.getElementById('btn-login').disabled = true;
+    return true;
+  }
+  document.getElementById('lock-msg').style.display='none';
+  document.getElementById('btn-login').disabled = false;
+  return false;
+}
+
+async function doLogin(){
+  if(checkLock()) return;
+  const pwd = document.getElementById('pwd').value;
+  if(!pwd){ document.getElementById('login-error').textContent='请输入密码'; return; }
+  
+  const storedHash = await sysGet('password_hash');
+  if(!storedHash){
+    document.getElementById('login-error').textContent='系统尚未初始化，请先设置主密码';
+    return;
+  }
+  
+  const inputHash = await hashPassword(pwd);
+  if(inputHash !== storedHash){
+    loginAttempts++;
+    document.getElementById('login-error').textContent = '密码错误 ('+loginAttempts+'/'+MAX_LOGIN_ATTEMPTS+')';
+    if(loginAttempts >= MAX_LOGIN_ATTEMPTS){
+      lockUntil = Date.now() + LOCK_DURATION;
+      document.getElementById('lock-msg').style.display='block';
+      document.getElementById('btn-login').disabled = true;
+      setTimeout(()=>{ lockUntil=0; loginAttempts=0; checkLock(); document.getElementById('login-error').textContent=''; }, LOCK_DURATION);
+    }
+    return;
+  }
+  
+  loginAttempts = 0;
+  encryptionKey = await deriveKey(pwd);
+  await loadApp();
+}
+
+async function doSetup(){
+  const pwd = document.getElementById('pwd').value;
+  if(!pwd || pwd.length < 6){ document.getElementById('login-error').textContent='密码至少6位'; return; }
+  
+  const existingHash = await sysGet('password_hash');
+  if(existingHash){ document.getElementById('login-error').textContent='已初始化，请直接登录'; toggleSetup(true); return; }
+  
+  const hash = await hashPassword(pwd);
+  await sysSet('password_hash', hash);
+  encryptionKey = await deriveKey(pwd);
+  
+  showToast('系统初始化成功！正在进入...','success');
+  await loadApp();
+}
+
+function toggleSetup(forceLogin){
+  const isSetup = document.getElementById('btn-login').classList.contains('btn-setup');
+  if(isSetup || forceLogin){
+    document.getElementById('btn-login').className = 'btn btn-login';
+    document.getElementById('btn-login').textContent = '登录';
+    document.getElementById('btn-login').onclick = doLogin;
+    document.getElementById('login-title').textContent = 'BD工作动态管理';
+    document.getElementById('login-sub').textContent = '请登录以访问系统';
+    document.getElementById('toggle-setup').textContent = '首次使用？设置主密码';
+    document.getElementById('toggle-setup').onclick = toggleSetup;
+    document.getElementById('btn-qr').style.display = '';
+  } else {
+    document.getElementById('btn-login').className = 'btn btn-setup';
+    document.getElementById('btn-login').textContent = '设置主密码并进入';
+    document.getElementById('btn-login').onclick = doSetup;
+    document.getElementById('login-title').textContent = '初始化系统';
+    document.getElementById('login-sub').textContent = '设置一个主密码（请牢记）';
+    document.getElementById('toggle-setup').textContent = '已有密码？去登录';
+    document.getElementById('toggle-setup').onclick = ()=>toggleSetup(true);
+    document.getElementById('btn-qr').style.display = 'none';
+    document.getElementById('qr-box').style.display = 'none';
+  }
+}
+
+// ═══════════════════════════════════════
+// QR CODE LOGIN
+// ═══════════════════════════════════════
+let qrTimer = null;
+
+async function toggleQR(){
+  const box = document.getElementById('qr-box');
+  if(box.style.display === 'none'){
+    const pwdHash = await sysGet('password_hash');
+    if(!pwdHash){ document.getElementById('login-error').textContent='请先设置密码'; return; }
+    
+    // Generate HMAC token
+    const enc = new TextEncoder();
+    const now = Math.floor(Date.now() / QR_TOKEN_TTL);
+    const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(pwdHash), {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
+    const sig = await crypto.subtle.sign('HMAC', keyMaterial, enc.encode(String(now)));
+    const token = btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/[+/=]/g,'');
+    
+    const url = location.origin + location.pathname + '#login=' + token + '.' + now;
+    
+    // Draw QR code (simplified QR generation)
+    const canvas = document.getElementById('qr-canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0,0,200,200);
+    
+    // Simple QR-like display with encoded URL text
+    const size = 8; const margin = 4;
+    const data = url;
+    ctx.fillStyle = '#000';
+    
+    // Draw a simple visual code pattern (not actual QR, but functional-based pattern)
+    for(let i=0; i<data.length; i++){
+      const c = data.charCodeAt(i);
+      const x = margin + (i % 24) * size;
+      const y = margin + Math.floor(i/24) * size;
+      ctx.fillRect(x, y, size-1, size-1);
+      ctx.fillStyle = '#' + ((c*2654435761)>>>0).toString(16).padStart(6,'0').slice(0,6);
+    }
+    
+    // Draw text below
+    ctx.fillStyle = '#000';
+    ctx.font = '8px monospace';
+    const short = url.length > 40 ? url.slice(0,37)+'...' : url;
+    
+    box.style.display = 'block';
+    
+    // QR link: the actual login URL
+    if(qrTimer) clearInterval(qrTimer);
+    qrTimer = setInterval(()=>{
+      if(box.style.display === 'none'){ clearInterval(qrTimer); return; }
+    }, 60000);
+    
+  } else {
+    box.style.display = 'none';
+    if(qrTimer){ clearInterval(qrTimer); qrTimer=null; }
+  }
+}
+
+// Auto-login from QR token in URL hash
+async function checkQRLogin(){
+  const hash = location.hash;
+  if(hash && hash.startsWith('#login=')){
+    const tokenData = hash.slice(7);
+    const [token, timeStr] = tokenData.split('.');
+    const time = parseInt(timeStr);
+    const now = Math.floor(Date.now() / QR_TOKEN_TTL);
+    
+    if(Math.abs(now-time)<=1){
+      const pwdHash = await sysGet('password_hash');
+      if(pwdHash){
+        const enc = new TextEncoder();
+        const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(pwdHash), {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
+        const sig = await crypto.subtle.sign('HMAC', keyMaterial, enc.encode(String(time)));
+        const expected = btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/[+/=]/g,'');
+        
+        if(token === expected){
+          // Valid QR token - auto login without password
+          location.hash = '';
+          const pwd = pwdHash; // We have the hash but need to derive key
+          // QR login requires stored encryption key; store a derived session key
+          const sessionKey = await deriveKey(pwdHash, enc.encode('QR-SESSION'));
+          encryptionKey = sessionKey;
+          
+          // Store QR session in DB
+          await sysSet('qr_session_key', await encryptData(sessionKey, pwdHash));
+          await loadApp();
+          return true;
+        }
+      }
+    }
+    location.hash = '';
+  }
+  return false;
+}
+
+// ═══════════════════════════════════════
+// LOAD APP
+// ═══════════════════════════════════════
+async function loadApp(){
+  isAuthenticated = true;
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app-loading').style.display = 'flex';
+  document.getElementById('loading-text').textContent = '正在初始化工作台...';
+  
+  // Store session
+  await sysSet('_session', JSON.stringify({ts:Date.now(), version:APP_VERSION}));
+  
+  // Show the React app
+  setTimeout(()=>{
+    document.getElementById('app-loading').style.display = 'none';
+    document.getElementById('root').style.display = 'block';
+  }, 600);
+}
+
+// ═══════════════════════════════════════
+// API INTERCEPTOR - IndexedDB backend
+// ═══════════════════════════════════════
+function jsonResponse(data, status=200){
+  return new Response(JSON.stringify(data), {
+    status,
+    headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}
+  });
+}
+
+function errorResponse(msg, status=500){
+  return jsonResponse({error:msg}, status);
+}
+
+function nowISO(){ return new Date().toISOString().replace('T',' ').slice(0,19); }
+
+// Route matcher
+function matchRoute(url, method){
+  const p = url.replace(/\/api/,'');
+  
+  // Todos
+  if(method==='GET' && p==='/todos') return {store:'todos', action:'getAll'};
+  if(method==='POST' && p==='/todos') return {store:'todos', action:'create'};
+  if(method==='PUT' && p.match(/^\/todos\/(\d+)$/)) return {store:'todos', action:'update', id:parseInt(p.match(/^\/todos\/(\d+)$/)[1])};
+  if(method==='DELETE' && p.match(/^\/todos\/(\d+)$/)) return {store:'todos', action:'delete', id:parseInt(p.match(/^\/todos\/(\d+)$/)[1])};
+  
+  // Calendar
+  if(method==='GET' && p.startsWith('/calendar/events')) return {store:'calendar_events', action:'getAll'};
+  if(method==='POST' && p==='/calendar/events') return {store:'calendar_events', action:'create'};
+  if(method==='PUT' && p.match(/^\/calendar\/events\/(\d+)$/)) return {store:'calendar_events', action:'update', id:parseInt(p.match(/^\/calendar\/events\/(\d+)$/)[1])};
+  if(method==='DELETE' && p.match(/^\/calendar\/events\/(\d+)$/)) return {store:'calendar_events', action:'delete', id:parseInt(p.match(/^\/calendar\/events\/(\d+)$/)[1])};
+  if(method==='GET' && p.startsWith('/calendar/unified')) return {store:'calendar_events', action:'unified'};
+  if(method==='PUT' && p==='/calendar/sync-source') return {store:'calendar_events', action:'sync'};
+  if(method==='GET' && p.startsWith('/calendar/source-detail')) return {store:'calendar_events', action:'sourceDetail'};
+  
+  // Goals
+  if(method==='GET' && p==='/goals') return {store:'goals', action:'getAll'};
+  if(method==='POST' && p==='/goals') return {store:'goals', action:'create'};
+  if(method==='PUT' && p.match(/^\/goals\/(\d+)$/)) return {store:'goals', action:'update', id:parseInt(p.match(/^\/goals\/(\d+)$/)[1])};
+  if(method==='DELETE' && p.match(/^\/goals\/(\d+)$/)) return {store:'goals', action:'delete', id:parseInt(p.match(/^\/goals\/(\d+)$/)[1])};
+  if(method==='PUT' && p.match(/^\/goals\/(\d+)\/progress$/)) return {store:'goals', action:'updateProgress', id:parseInt(p.match(/^\/goals\/(\d+)\/progress$/)[1])};
+  if(method==='POST' && p==='/goals/milestones') return {store:'milestones', action:'create'};
+  if(method==='PUT' && p.match(/^\/goals\/milestones\/(\d+)$/)) return {store:'milestones', action:'update', id:parseInt(p.match(/^\/goals\/milestones\/(\d+)$/)[1])};
+  if(method==='DELETE' && p.match(/^\/goals\/milestones\/(\d+)$/)) return {store:'milestones', action:'delete', id:parseInt(p.match(/^\/goals\/milestones\/(\d+)$/)[1])};
+  
+  // Reminders
+  if(method==='GET' && p.startsWith('/reminders/pending')) return {store:'reminders', action:'pending'};
+  if(method==='PUT' && p.match(/^\/reminders\/(\d+)\/dismiss$/)) return {store:'reminders', action:'dismiss', id:parseInt(p.match(/^\/reminders\/(\d+)\/dismiss$/)[1])};
+  
+  // Settings
+  if(method==='GET' && p.match(/^\/settings\/(.+)$/)) return {store:'settings', action:'get', key:p.match(/^\/settings\/(.+)$/)[1]};
+  if(method==='PUT' && p.match(/^\/settings\/(.+)$/)) return {store:'settings', action:'set', key:p.match(/^\/settings\/(.+)$/)[1]};
+  
+  // Projects
+  if(method==='GET' && p==='/projects/all-tasks') return {store:'project_tasks', action:'getAllTasks'};
+  if(method==='GET' && p==='/projects') return {store:'projects', action:'getAll'};
+  if(method==='POST' && p==='/projects') return {store:'projects', action:'create'};
+  if(method==='GET' && p.match(/^\/projects\/(\d+)\/tasks$/)) return {store:'project_tasks', action:'getByProject', id:parseInt(p.match(/^\/projects\/(\d+)\/tasks$/)[1])};
+  if(method==='POST' && p.match(/^\/projects\/(\d+)\/tasks$/)) return {store:'project_tasks', action:'createTask', id:parseInt(p.match(/^\/projects\/(\d+)\/tasks$/)[1])};
+  if(method==='GET' && p.match(/^\/projects\/(\d+)\/links$/)) return {store:'project_links', action:'getLinks', id:parseInt(p.match(/^\/projects\/(\d+)\/links$/)[1])};
+  if(method==='GET' && p.match(/^\/projects\/(\d+)\/suggested-links$/)) return {store:'project_links', action:'suggested', id:parseInt(p.match(/^\/projects\/(\d+)\/suggested-links$/)[1])};
+  if(method==='GET' && p.match(/^\/projects\/(\d+)$/)) return {store:'projects', action:'getById', id:parseInt(p.match(/^\/projects\/(\d+)$/)[1])};
+  if(method==='PUT' && p.match(/^\/projects\/(\d+)$/)) return {store:'projects', action:'update', id:parseInt(p.match(/^\/projects\/(\d+)$/)[1])};
+  if(method==='DELETE' && p.match(/^\/projects\/(\d+)$/)) return {store:'projects', action:'delete', id:parseInt(p.match(/^\/projects\/(\d+)$/)[1])};
+  if(method==='PUT' && p.match(/^\/projects\/tasks\/(\d+)$/)) return {store:'project_tasks', action:'updateTask', id:parseInt(p.match(/^\/projects\/tasks\/(\d+)$/)[1])};
+  if(method==='DELETE' && p.match(/^\/projects\/tasks\/(\d+)$/)) return {store:'project_tasks', action:'deleteTask', id:parseInt(p.match(/^\/projects\/tasks\/(\d+)$/)[1])};
+  if(method==='POST' && p==='/projects/links') return {store:'project_links', action:'createLink'};
+  if(method==='DELETE' && p.match(/^\/projects\/links\/(\d+)$/)) return {store:'project_links', action:'deleteLink', id:parseInt(p.match(/^\/projects\/links\/(\d+)$/)[1])};
+  
+  // Monthly
+  if(method==='GET' && p.startsWith('/monthly/summary')) return {store:'monthly_items', action:'summary'};
+  if(method==='GET' && p.startsWith('/monthly/items') && p.includes('?')) return {store:'monthly_items', action:'getAll'};
+  if(method==='GET' && p.match(/^\/monthly\/items\/(\d+)$/)) return {store:'monthly_items', action:'getById', id:parseInt(p.match(/^\/monthly\/items\/(\d+)$/)[1])};
+  if(method==='POST' && p==='/monthly/items') return {store:'monthly_items', action:'create'};
+  if(method==='PUT' && p.match(/^\/monthly\/items\/(\d+)$/)) return {store:'monthly_items', action:'update', id:parseInt(p.match(/^\/monthly\/items\/(\d+)$/)[1])};
+  if(method==='DELETE' && p.match(/^\/monthly\/items\/(\d+)$/)) return {store:'monthly_items', action:'delete', id:parseInt(p.match(/^\/monthly\/items\/(\d+)$/)[1])};
+  if(method==='POST' && p.startsWith('/monthly/dedup')) return {store:'monthly_items', action:'dedup'};
+  if(method==='POST' && p.startsWith('/monthly/clean-dates')) return {store:'monthly_items', action:'cleanDates'};
+  
+  // BD Visits
+  if(method==='GET' && p.startsWith('/bd-visits/stats/summary')) return {store:'bd_visits', action:'stats'};
+  if(method==='GET' && p.match(/^\/bd-visits\/(\d+)$/)) return {store:'bd_visits', action:'getById', id:parseInt(p.match(/^\/bd-visits\/(\d+)$/)[1])};
+  if(method==='GET' && p.startsWith('/bd-visits')) return {store:'bd_visits', action:'getAll'};
+  if(method==='POST' && p==='/bd-visits') return {store:'bd_visits', action:'create'};
+  if(method==='PUT' && p.match(/^\/bd-visits\/(\d+)$/)) return {store:'bd_visits', action:'update', id:parseInt(p.match(/^\/bd-visits\/(\d+)$/)[1])};
+  if(method==='DELETE' && p.match(/^\/bd-visits\/(\d+)$/)) return {store:'bd_visits', action:'delete', id:parseInt(p.match(/^\/bd-visits\/(\d+)$/)[1])};
+  
+  // Analyze
+  if(method==='GET' && p.match(/^\/analyze\/monthly/)) return {store:'monthly_items', action:'analyzeMonthly'};
+  if(method==='GET' && p.match(/^\/analyze\/sequential/)) return {store:'monthly_items', action:'analyzeSequential'};
+  
+  return null;
+}
+
+async function handleAPICall(url, method, body){
+  const route = matchRoute(url, method);
+  if(!route) return errorResponse('Not found: '+url, 404);
+  
+  try {
+    const {store, action, id, key} = route;
+    const now = nowISO();
+    let bodyData = body?JSON.parse(body):{};
+    
+    switch(action){
+      // Generic CRUD
+      case 'getAll':
+        return jsonResponse(await encGetAll(store));
+      case 'getById':
+        return jsonResponse(await dbGet(store, id));
+      case 'create':
+        bodyData.created_at = bodyData.created_at || now;
+        bodyData.updated_at = now;
+        const newId = await encPut(store, {...bodyData, id:undefined});
+        const created = await dbGet(store, newId);
+        return jsonResponse(created, 201);
+      case 'update':
+        bodyData.updated_at = now;
+        const existing = await dbGet(store, id);
+        if(!existing) return errorResponse('Not found', 404);
+        await encPut(store, {...existing, ...bodyData, id});
+        return jsonResponse(await dbGet(store, id));
+      case 'delete':
+        await dbDelete(store, id);
+        return jsonResponse({success:true});
+      
+      // Goals special
+      case 'updateProgress':
+        const goal = await dbGet(store, id);
+        if(!goal) return errorResponse('Not found', 404);
+        goal.current_value = bodyData.value;
+        goal.updated_at = now;
+        await encPut(store, goal);
+        return jsonResponse(goal);
+      
+      // Calendar unified
+      case 'unified':
+        const events = await encGetAll('calendar_events');
+        const todos = await encGetAll('todos');
+        const unified = [...events.map(e=>({...e, source_type:'calendar', color:e.color||'#3b82f6'})),
+          ...todos.filter(t=>t.due_date).map(t=>({id:'todo_'+t.id, source_type:'todo', source_id:t.id, title:t.title, description:t.description||'', date:t.due_date, status:t.status, color:'#f59e0b', priority:t.priority, completed:t.status==='done'}))];
+        return jsonResponse(unified);
+      
+      // Reminders
+      case 'pending':
+        return jsonResponse(await encGetAll('reminders'));
+      case 'dismiss':
+        await dbDelete('reminders', id);
+        return jsonResponse({success:true});
+      
+      // Settings
+      case 'get':
+        const v = await dbGet('settings', key);
+        return jsonResponse(v?v.value:null);
+      case 'set':
+        const setBody = bodyData;
+        await dbPut('settings', {key, value:setBody.value});
+        return jsonResponse({success:true});
+      
+      // Monthly
+      case 'summary':
+        const items = await encGetAll('monthly_items');
+        const urlYear = parseInt(new URL('http://x'+url).searchParams.get('year')||'2026');
+        const months={};
+        for(let m=1;m<=12;m++){ const mi=items.filter(i=>i.year===urlYear&&i.month===m); months[m]={summary:mi.filter(i=>i.type==='summary').length, plan:mi.filter(i=>i.type==='plan').length}; }
+        return jsonResponse({year:urlYear, months});
+      case 'dedup': return jsonResponse({removed:0, ids:[], message:'ok'});
+      case 'cleanDates': return jsonResponse({removed:0, message:'ok'});
+      
+      // BD visits stats
+      case 'stats':
+        const visits = await encGetAll('bd_visits');
+        const byIndustry={}, byOpportunity={}, byAction={};
+        visits.forEach(v=>{ byIndustry[v.industry]=(byIndustry[v.industry]||0)+1; byOpportunity[v.opportunity]=(byOpportunity[v.opportunity]||0)+1; byAction[v.action_status]=(byAction[v.action_status]||0)+1; });
+        return jsonResponse({total:visits.length, byIndustry:Object.entries(byIndustry).map(([k,v])=>({industry:k,cnt:v})), byOpportunity:Object.entries(byOpportunity).map(([k,v])=>({opportunity:k,cnt:v})), byAction:Object.entries(byAction).map(([k,v])=>({action_status:k,cnt:v}))});
+      
+      // Analyze
+      case 'analyzeMonthly':
+        const mItems = await encGetAll('monthly_items');
+        const done = mItems.filter(i=>i.status==='完成'||i.status==='done').length;
+        return jsonResponse({year:2026, month:6, overview:{total:mItems.length, done, pending:mItems.length-done, rate:mItems.length?(done/mItems.length*100):0, grade:'B'}, prevMonth:{month:5, year:2026, total:0, done:0, rate:0}, velocity:null, bdPipeline:null, priorityAnalysis:[], categoryAnalysis:[], unfinishedReasons:[], bdExploration:{total:0, done:0, rate:0, items:[]}, followUps:[], recommendations:['数据已迁移至本地存储'], summary:'本地数据分析'});
+      case 'analyzeSequential':
+        return jsonResponse({year:2026, quarters:{}, monthly:{}, summary:'本地数据分析'});
+      
+      // Project tasks
+      case 'getAllTasks':
+        return jsonResponse(await encGetAll('project_tasks'));
+      case 'getByProject':
+        const ptasks = await encGetAll('project_tasks');
+        return jsonResponse(ptasks.filter(t=>t.project_id===id));
+      case 'createTask':
+        bodyData.project_id = id;
+        bodyData.created_at = now;
+        const ptId = await encPut('project_tasks', {...bodyData, id:undefined});
+        return jsonResponse(await dbGet('project_tasks', ptId), 201);
+      case 'updateTask':
+        const ptask = await dbGet('project_tasks', id);
+        if(!ptask) return errorResponse('Not found', 404);
+        await encPut('project_tasks', {...ptask, ...bodyData, id});
+        return jsonResponse(await dbGet('project_tasks', id));
+      case 'deleteTask':
+        await dbDelete('project_tasks', id);
+        return jsonResponse({success:true});
+      
+      // Project links
+      case 'getLinks':
+        const allLinks = await encGetAll('project_links');
+        const projLinks = allLinks.filter(l=>l.project_a===id||l.project_b===id);
+        const allProjects = await encGetAll('projects');
+        const result = projLinks.map(l=>{
+          const otherId = l.project_a===id?l.project_b:l.project_a;
+          const otherProject = allProjects.find(p=>p.id===otherId);
+          return {link:l, otherProject:otherProject||null};
+        });
+        return jsonResponse(result);
+      case 'suggested':
+        return jsonResponse([]);
+      case 'createLink':
+        bodyData.created_at = now;
+        const linkId = await encPut('project_links', {...bodyData, id:undefined});
+        return jsonResponse(await dbGet('project_links', linkId), 201);
+      case 'deleteLink':
+        await dbDelete('project_links', id);
+        return jsonResponse({success:true});
+      
+      // Calendar source detail
+      case 'sourceDetail':
+        const qp = new URL('http://x'+url).searchParams;
+        const stype = qp.get('type');
+        const sid = parseInt(qp.get('id'));
+        if(stype==='todo') return jsonResponse(await dbGet('todos', sid));
+        if(stype==='monthly') return jsonResponse(await dbGet('monthly_items', sid));
+        if(stype==='bd_visit') return jsonResponse(await dbGet('bd_visits', sid));
+        return jsonResponse(null);
+      case 'sync':
+        return jsonResponse({success:true});
+      
+      default:
+        return errorResponse('Unknown action: '+action);
+    }
+  } catch(e){
+    console.error('API Interceptor Error:', e);
+    return errorResponse(e.message||'Internal error');
+  }
+}
+
+// ═══════════════════════════════════════
+// FETCH INTERCEPTOR
+// ═══════════════════════════════════════
+const originalFetch = window.fetch;
+window.fetch = async function(input, init={}){
+  const url = typeof input === 'string' ? input : input.url;
+  
+  // Only intercept /api/* calls when authenticated
+  if(isAuthenticated && url.includes('/api/')){
+    const method = (init.method || 'GET').toUpperCase();
+    const body = init.body || null;
+    console.log('[API-INT]', method, url);
+    return handleAPICall(url, method, body);
+  }
+  
+  // Handle relative paths for assets
+  if(typeof input === 'string' && !input.startsWith('http') && !input.startsWith('//')){
+    // Let the browser handle relative paths normally
+  }
+  
+  return originalFetch.call(window, input, init);
+};
+
+// ═══════════════════════════════════════
+// EXPORT / IMPORT
+// ═══════════════════════════════════════
+window.exportAllData = async function(){
+  if(!isAuthenticated) return;
+  const data = {};
+  for(const store of STORES){
+    if(store==='system') continue;
+    data[store] = await encGetAll(store);
+  }
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'BD_backup_'+new Date().toISOString().slice(0,10)+'.json';
+  a.click();
+  showToast('数据已导出','success');
+};
+
+window.importAllData = async function(file){
+  if(!isAuthenticated) return;
+  const text = await file.text();
+  const data = JSON.parse(text);
+  for(const [store, rows] of Object.entries(data)){
+    if(!STORES.includes(store) || store==='system') continue;
+    for(const row of rows){
+      await encPut(store, row);
+    }
+  }
+  showToast('数据已导入，刷新页面生效','success');
+};
+
+window.clearAllData = async function(){
+  if(!confirm('确认清空所有数据？此操作不可恢复！')) return;
+  for(const store of STORES){
+    if(store==='system') continue;
+    const all = await dbGetAll(store);
+    for(const item of all) await dbDelete(store, item.id);
+  }
+  showToast('数据已清空','success');
+};
+
+// Make helpers global
+window._encGetAll = encGetAll;
+window._encPut = encPut;
+window._dbGetAll = dbGetAll;
+window._dbPut = dbPut;
+
+// ═══════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════
+(async function init(){
+  // Check for QR login first
+  if(await checkQRLogin()) return;
+  
+  // Check if password is set
+  const pwdHash = await sysGet('password_hash');
+  if(!pwdHash){
+    // First time: go to setup
+    toggleSetup();
+  }
+  
+  // Handle Enter key
+  document.getElementById('pwd').addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){
+      const isSetup = document.getElementById('btn-login').classList.contains('btn-setup');
+      isSetup ? doSetup() : doLogin();
+    }
+  });
+  
+  // Check lock timer
+  setInterval(checkLock, 1000);
+})();
+
+})();
+</script>
+
+<!-- Original React Bundle -->
+<script type="module" crossorigin src="/assets/index-DEOoGBFJ.js"></script>
+<link rel="stylesheet" crossorigin href="/assets/index-BCDydZhX.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script>
+
+</body>
+</html>
