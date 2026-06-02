@@ -7,16 +7,15 @@
 <meta name="description" content="BD工作动态管理系统"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<link rel="apple-touch-icon" href="pwa-192x192.png"/>
 <base href="./">
 <title>BD工作动态管理</title>
 <style>
 body{margin:0;overflow:hidden;user-select:none;-webkit-user-select:none}
 #root{height:100vh;display:flex}
-/* Loading spinner during first mount */
-#preload{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;transition:opacity 0.3s}
+#preload{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;transition:opacity 0.3s;flex-direction:column}
 #preload.done{opacity:0;pointer-events:none}
 #preload .spinner{width:40px;height:40px;border:3px solid #334155;border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:16px}
+#preload .status{color:#64748b;font-size:0.8rem;margin-top:8px;max-width:300px;text-align:center;line-height:1.5}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
@@ -26,6 +25,7 @@ body{margin:0;overflow:hidden;user-select:none;-webkit-user-select:none}
   <div style="text-align:center">
     <div class="spinner"></div>
     <p style="color:#64748b;font-size:0.85rem">BD工作动态管理</p>
+    <p class="status" id="preload-status"></p>
   </div>
 </div>
 
@@ -35,16 +35,36 @@ body{margin:0;overflow:hidden;user-select:none;-webkit-user-select:none}
 (function(){
 'use strict';
 
-// Immediately authenticate (no login wall)
-window.__AUTH__ = true;
+var DEBUG_LOG = [];
+var PRELOAD_EL = document.getElementById('preload');
+var STATUS_EL = document.getElementById('preload-status');
 
-// Hide preloader when React mounts
+function status(msg){ if(STATUS_EL) STATUS_EL.textContent=msg; DEBUG_LOG.push('[STATUS] '+msg); }
+function dlog(msg){ console.log('[BD-DEBUG]',msg); DEBUG_LOG.push(msg); }
+
+status('初始化...');
+
+// ═══ Fallback: hide preloader after 8s ═══
+setTimeout(function(){
+  if(PRELOAD_EL && !PRELOAD_EL.classList.contains('done')){
+    status('App加载超时，请检查控制台日志');
+    dlog('PRELOAD TIMEOUT - React may have failed to mount');
+    PRELOAD_EL.style.opacity='0.6';
+    PRELOAD_EL.querySelector('.spinner').style.display='none';
+  }
+},8000);
+
+// ═══ Watch for React mount ═══
 var observer = new MutationObserver(function(){
   var root = document.getElementById('root');
   if(root && root.children.length > 0){
-    document.getElementById('preload').classList.add('done');
-    setTimeout(function(){ document.getElementById('preload').style.display='none'; }, 400);
+    status('渲染完成');
+    setTimeout(function(){
+      PRELOAD_EL.classList.add('done');
+      setTimeout(function(){ PRELOAD_EL.style.display='none'; },400);
+    },200);
     observer.disconnect();
+    dlog('React mounted successfully, '+root.children.length+' children');
   }
 });
 observer.observe(document.getElementById('root'), {childList:true, subtree:true});
@@ -52,22 +72,37 @@ observer.observe(document.getElementById('root'), {childList:true, subtree:true}
 // ═══════════════════════════
 // INDEXEDDB
 // ═══════════════════════════
-const DB_NAME = 'BDSystemDB';
-const DB_VERSION = 1;
-const STORES = ['todos','calendar_events','goals','milestones','reminders','settings','projects','project_tasks','project_links','monthly_items','bd_visits','system'];
+var DB_NAME = 'BDSystemDB';
+var DB_VERSION = 1;
+var STORES = ['todos','calendar_events','goals','milestones','reminders','settings','projects','project_tasks','project_links','monthly_items','bd_visits','system'];
+
+status('连接本地数据库...');
 
 function openDB(){
-  return new Promise((resolve,reject)=>{
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+  return new Promise(function(resolve,reject){
+    var req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = function(e){
+      dlog('IndexedDB upgrade - creating stores');
       var db = e.target.result;
-      STORES.forEach(function(s){
-        if(!db.objectStoreNames.contains(s)) db.createObjectStore(s, {keyPath:'id', autoIncrement:true});
-      });
-      if(!db.objectStoreNames.contains('system')) db.createObjectStore('system', {keyPath:'key'});
+      for(var i=0; i<STORES.length; i++){
+        var s = STORES[i];
+        if(!db.objectStoreNames.contains(s)){
+          db.createObjectStore(s, {keyPath:'id', autoIncrement:true});
+        }
+      }
+      if(!db.objectStoreNames.contains('system')){
+        db.createObjectStore('system', {keyPath:'key'});
+      }
     };
-    req.onsuccess = function(){ resolve(req.result); };
-    req.onerror = function(){ reject(req.error); };
+    req.onsuccess = function(){
+      dlog('IndexedDB opened successfully');
+      resolve(req.result);
+    };
+    req.onerror = function(e){
+      dlog('IndexedDB ERROR: '+e.target.error);
+      status('数据库错误: '+e.target.error);
+      reject(e.target.error);
+    };
   });
 }
 
@@ -77,32 +112,16 @@ function dbOp(storeName, mode, fn){
       var tx = db.transaction(storeName, mode);
       var store = tx.objectStore(storeName);
       var req = fn(store);
-      req.onsuccess = function(e){ resolve(e.target.result); db.close(); };
-      req.onerror = function(e){ reject(e.target.error); db.close(); };
+      req.onsuccess = function(e){ resolve(e.target.result); try{db.close();}catch(_){} };
+      req.onerror = function(e){ reject(e.target.error); try{db.close();}catch(_){} };
     });
   });
 }
 
-function dbGetAll(storeName){
-  return openDB().then(function(db){
-    return new Promise(function(resolve,reject){
-      var tx = db.transaction(storeName, 'readonly');
-      var req = tx.objectStore(storeName).getAll();
-      req.onsuccess = function(e){ resolve(e.target.result); db.close(); };
-      req.onerror = function(e){ reject(e.target.error); db.close(); };
-    });
-  });
-}
-
-function dbGet(storeName, id){ return dbOp(storeName, 'readonly', function(s){ return s.get(id); }); }
-function dbPut(storeName, obj){ return dbOp(storeName, 'readwrite', function(s){ return s.put(obj); }); }
-function dbDelete(storeName, id){ return dbOp(storeName, 'readwrite', function(s){ return s.delete(id); }); }
-
-// ═══════════════════════════
-// PLAIN (no encryption for debug)
-// ═══════════════════════════
-function dataGetAll(s){ return dbGetAll(s); }
-function dataPut(s, obj){ return dbPut(s, obj); }
+function dbGetAll(s){ return dbOp(s, 'readonly', function(st){ return st.getAll(); }); }
+function dbGet(s, id){ return dbOp(s, 'readonly', function(st){ return st.get(id); }); }
+function dbPut(s, obj){ return dbOp(s, 'readwrite', function(st){ return st.put(obj); }); }
+function dbDelete(s, id){ return dbOp(s, 'readwrite', function(st){ return st.delete(id); }); }
 
 // ═══════════════════════════
 // API HELPERS
@@ -116,48 +135,53 @@ function jsonResponse(data, status){
 function errorResponse(msg, status){
   return jsonResponse({error:msg}, status||500);
 }
-function nowISO(){ return new Date().toISOString().replace('T',' ').slice(0,19); }
+function nowISO(){
+  var d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+
+    String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
+}
 
 // ═══════════════════════════
 // ROUTE MATCHER
 // ═══════════════════════════
 function matchRoute(url, method){
   var p = url.replace(/\/api/,'');
+  var m;
 
-  if(method==='GET' && p==='/todos') return {s:'todos', a:'getAll'};
-  if(method==='POST' && p==='/todos') return {s:'todos', a:'create'};
-  var m = p.match(/^\/todos\/(\d+)$/); if(m){ var id=parseInt(m[1]); if(method==='PUT') return {s:'todos',a:'update',id:id}; if(method==='DELETE') return {s:'todos',a:'delete',id:id}; }
+  if(method==='GET' && p==='/todos') return {s:'todos',a:'getAll'};
+  if(method==='POST' && p==='/todos') return {s:'todos',a:'create'};
+  m=p.match(/^\/todos\/(\d+)$/); if(m){ var id=parseInt(m[1]); return {s:'todos',a:method==='PUT'?'update':'delete',id:id}; }
 
-  if(method==='GET' && p.startsWith('/calendar/events')) return {s:'calendar_events',a:'getAll'};
+  if(method==='GET' && p==='/calendar/events') return {s:'calendar_events',a:'getAll'};
   if(method==='POST' && p==='/calendar/events') return {s:'calendar_events',a:'create'};
-  m=p.match(/^\/calendar\/events\/(\d+)$/); if(m){ id=parseInt(m[1]); if(method==='PUT') return {s:'calendar_events',a:'update',id:id}; if(method==='DELETE') return {s:'calendar_events',a:'delete',id:id}; }
-  if(method==='GET' && p.startsWith('/calendar/unified')) return {s:'calendar_events',a:'unified'};
+  m=p.match(/^\/calendar\/events\/(\d+)$/); if(m){ id=parseInt(m[1]); return {s:'calendar_events',a:method==='PUT'?'update':'delete',id:id}; }
+  if(method==='GET' && p.indexOf('/calendar/unified')===0) return {s:'calendar_events',a:'unified'};
   if(method==='PUT' && p==='/calendar/sync-source') return {s:'calendar_events',a:'sync'};
-  if(method==='GET' && p.startsWith('/calendar/source-detail')) return {s:'calendar_events',a:'sourceDetail'};
+  if(method==='GET' && p.indexOf('/calendar/source-detail')===0) return {s:'calendar_events',a:'sourceDetail'};
 
-  if(method==='GET' && p==='/goals') return {s:'goals',a:'getAll'};
+  if(method==='GET' && p==='/goals') return {s:'goals',a:'getAllGoals'};
   if(method==='POST' && p==='/goals') return {s:'goals',a:'create'};
-  m=p.match(/^\/goals\/(\d+)$/); if(m){ id=parseInt(m[1]); if(method==='PUT') return {s:'goals',a:'update',id:id}; if(method==='DELETE') return {s:'goals',a:'delete',id:id}; }
+  m=p.match(/^\/goals\/(\d+)$/); if(m){ id=parseInt(m[1]); return {s:'goals',a:method==='PUT'?'update':'delete',id:id}; }
   m=p.match(/^\/goals\/(\d+)\/progress$/); if(m) return {s:'goals',a:'updateProgress',id:parseInt(m[1])};
   if(method==='POST' && p==='/goals/milestones') return {s:'milestones',a:'create'};
-  m=p.match(/^\/goals\/milestones\/(\d+)$/); if(m){ id=parseInt(m[1]); if(method==='PUT') return {s:'milestones',a:'update',id:id}; if(method==='DELETE') return {s:'milestones',a:'delete',id:id}; }
+  m=p.match(/^\/goals\/milestones\/(\d+)$/); if(m){ id=parseInt(m[1]); return {s:'milestones',a:method==='PUT'?'update':'delete',id:id}; }
 
-  if(method==='GET' && p.startsWith('/reminders/pending')) return {s:'reminders',a:'pending'};
+  if(method==='GET' && p.indexOf('/reminders/pending')===0) return {s:'reminders',a:'pending'};
   m=p.match(/^\/reminders\/(\d+)\/dismiss$/); if(m) return {s:'reminders',a:'dismiss',id:parseInt(m[1])};
 
   if(method==='GET' && p==='/projects/all-tasks') return {s:'project_tasks',a:'getAllTasks'};
   if(method==='GET' && p==='/projects') return {s:'projects',a:'getAll'};
   if(method==='POST' && p==='/projects') return {s:'projects',a:'create'};
-  m=p.match(/^\/projects\/(\d+)\/tasks$/); if(m){ id=parseInt(m[1]); if(method==='GET') return {s:'project_tasks',a:'getByProject',id:id}; if(method==='POST') return {s:'project_tasks',a:'createTask',id:id}; }
+  m=p.match(/^\/projects\/(\d+)\/tasks$/); if(m){ id=parseInt(m[1]); return {s:'project_tasks',a:method==='GET'?'getByProject':'createTask',id:id}; }
   m=p.match(/^\/projects\/(\d+)\/links$/); if(m) return {s:'project_links',a:'getLinks',id:parseInt(m[1])};
   m=p.match(/^\/projects\/(\d+)\/suggested-links$/); if(m) return {s:'project_links',a:'suggested',id:parseInt(m[1])};
   m=p.match(/^\/projects\/(\d+)$/); if(m){ id=parseInt(m[1]); if(method==='GET') return {s:'projects',a:'getById',id:id}; if(method==='PUT') return {s:'projects',a:'update',id:id}; if(method==='DELETE') return {s:'projects',a:'delete',id:id}; }
-  m=p.match(/^\/projects\/tasks\/(\d+)$/); if(m){ id=parseInt(m[1]); if(method==='PUT') return {s:'project_tasks',a:'updateTask',id:id}; if(method==='DELETE') return {s:'project_tasks',a:'deleteTask',id:id}; }
+  m=p.match(/^\/projects\/tasks\/(\d+)$/); if(m){ id=parseInt(m[1]); return {s:'project_tasks',a:method==='PUT'?'updateTask':'deleteTask',id:id}; }
   if(method==='POST' && p==='/projects/links') return {s:'project_links',a:'createLink'};
   m=p.match(/^\/projects\/links\/(\d+)$/); if(m) return {s:'project_links',a:'deleteLink',id:parseInt(m[1])};
 
-  if(method==='GET' && p.startsWith('/monthly/summary')) return {s:'monthly_items',a:'summary'};
-  if(method==='GET' && p.startsWith('/monthly/items') && p.indexOf('?')>=0) return {s:'monthly_items',a:'getAll'};
+  if(method==='GET' && p.indexOf('/monthly/summary')===0) return {s:'monthly_items',a:'summary'};
+  if(method==='GET' && p.indexOf('/monthly/items')===0 && p.indexOf('?')>=0) return {s:'monthly_items',a:'getAll'};
   m=p.match(/^\/monthly\/items\/(\d+)$/); if(m){ id=parseInt(m[1]); if(method==='GET') return {s:'monthly_items',a:'getById',id:id}; if(method==='PUT') return {s:'monthly_items',a:'update',id:id}; if(method==='DELETE') return {s:'monthly_items',a:'delete',id:id}; }
   if(method==='POST' && p==='/monthly/items') return {s:'monthly_items',a:'create'};
   if(method==='POST' && p.indexOf('/monthly/dedup')>=0) return {s:'monthly_items',a:'dedup'};
@@ -165,10 +189,10 @@ function matchRoute(url, method){
 
   if(method==='GET' && p.indexOf('/bd-visits/stats/summary')>=0) return {s:'bd_visits',a:'stats'};
   m=p.match(/^\/bd-visits\/(\d+)$/); if(m){ id=parseInt(m[1]); if(method==='GET') return {s:'bd_visits',a:'getById',id:id}; if(method==='PUT') return {s:'bd_visits',a:'update',id:id}; if(method==='DELETE') return {s:'bd_visits',a:'delete',id:id}; }
-  if(method==='GET' && p.startsWith('/bd-visits') && p.split('/').length===2) return {s:'bd_visits',a:'getAll'};
+  if(method==='GET' && p.indexOf('/bd-visits')===0 && p.split('/').length<=2) return {s:'bd_visits',a:'getAll'};
   if(method==='POST' && p==='/bd-visits') return {s:'bd_visits',a:'create'};
 
-  m=p.match(/^\/settings\/(.+)$/); if(m){ if(method==='GET') return {s:'settings',a:'get',key:m[1]}; if(method==='PUT') return {s:'settings',a:'set',key:m[1]}; }
+  m=p.match(/^\/settings\/(.+)$/); if(m){ var k=m[1]; return {s:'settings',a:method==='GET'?'get':'set',key:k}; }
 
   if(method==='GET' && p.indexOf('/analyze/monthly')>=0) return {s:'monthly_items',a:'analyzeMonthly'};
   if(method==='GET' && p.indexOf('/analyze/sequential')>=0) return {s:'monthly_items',a:'analyzeSequential'};
@@ -185,113 +209,229 @@ async function handleAPI(url, method, body){
 
   try {
     var s=route.s, a=route.a, id=route.id, key=route.key, now=nowISO();
-    var bd = body?JSON.parse(body):{};
+    var bd = {};
+    if(body){
+      try{ bd = typeof body === 'string' ? JSON.parse(body) : body; }
+      catch(e){ bd = {}; }
+    }
 
     switch(a){
-      case 'getAll': return jsonResponse(await dataGetAll(s));
+      case 'getAll': return jsonResponse(await dbGetAll(s));
       case 'getById': return jsonResponse(await dbGet(s,id));
+
       case 'create':
-        bd.created_at=bd.created_at||now; bd.updated_at=now;
-        var nid=await dataPut(s,Object.assign({},bd,{id:undefined}));
-        return jsonResponse(await dbGet(s,nid),201);
+        var obj = {};
+        for(var k in bd){ if(bd.hasOwnProperty(k)) obj[k]=bd[k]; }
+        obj.created_at = obj.created_at||now;
+        obj.updated_at = now;
+        delete obj.id;
+        var nid = await dbPut(s, obj);
+        var created = await dbGet(s, nid);
+        if(!created) return errorResponse('Create failed - record not found');
+        return jsonResponse(created, 201);
+
       case 'update':
-        bd.updated_at=now;
-        var ex=await dbGet(s,id);
-        if(!ex) return errorResponse('Not found',404);
-        await dataPut(s,Object.assign({},ex,bd,{id:id}));
-        return jsonResponse(await dbGet(s,id));
-      case 'delete': await dbDelete(s,id); return jsonResponse({success:true});
+        var ex = await dbGet(s, id);
+        if(!ex) return errorResponse('Not found', 404);
+        for(var k2 in bd){ if(bd.hasOwnProperty(k2)) ex[k2]=bd[k2]; }
+        ex.updated_at = now;
+        await dbPut(s, ex);
+        return jsonResponse(await dbGet(s, id));
+
+      case 'delete':
+        await dbDelete(s, id);
+        return jsonResponse({success:true});
+
+      case 'getAllGoals':
+        var goals = await dbGetAll('goals');
+        var milestones = await dbGetAll('milestones');
+        return jsonResponse({goals:goals, milestones:milestones});
+
       case 'updateProgress':
-        var g=await dbGet(s,id); if(!g) return errorResponse('Not found',404);
-        g.current_value=bd.value; g.updated_at=now; await dataPut(s,g); return jsonResponse(g);
+        var g = await dbGet(s, id);
+        if(!g) return errorResponse('Not found',404);
+        g.current_value = bd.value;
+        g.updated_at = now;
+        await dbPut(s, g);
+        return jsonResponse(g);
+
       case 'unified':
-        var ev=await dataGetAll('calendar_events'), td=await dataGetAll('todos');
-        var u=[];
-        ev.forEach(function(e){u.push(Object.assign({},e,{source_type:'calendar',color:e.color||'#3b82f6'}));});
+        var ev = await dbGetAll('calendar_events');
+        var td = await dbGetAll('todos');
+        var u = [];
+        ev.forEach(function(e){u.push(Object.assign({},e,{source_type:'calendar',source_id:e.id,color:e.color||'#3b82f6'}));});
         td.filter(function(t){return t.due_date;}).forEach(function(t){u.push({id:'todo_'+t.id,source_type:'todo',source_id:t.id,title:t.title,description:t.description||'',date:t.due_date,status:t.status,color:'#f59e0b',priority:t.priority,completed:t.status==='done'});});
         return jsonResponse(u);
-      case 'pending': return jsonResponse(await dataGetAll('reminders'));
+
+      case 'pending': return jsonResponse(await dbGetAll('reminders'));
       case 'dismiss': await dbDelete('reminders',id); return jsonResponse({success:true});
-      case 'get': var v=await dbGet('settings',key); return jsonResponse(v?v.value:null);
-      case 'set': await dbPut('settings',{key:key,value:bd.value}); return jsonResponse({success:true});
+
+      case 'get':
+        var sv = await dbGet('settings', key);
+        return jsonResponse(sv?sv.value:null);
+      case 'set':
+        await dbPut('settings', {key:key, value:bd.value});
+        return jsonResponse({success:true});
+
       case 'summary':
-        var mi=await dataGetAll('monthly_items'), uy=parseInt(new URL('http://x'+url).searchParams.get('year')||'2026'), mo={};
-        for(var mm=1;mm<=12;mm++){var fi=mi.filter(function(i){return i.year===uy&&i.month===mm;}); mo[mm]={summary:fi.filter(function(i){return i.type==='summary';}).length, plan:fi.filter(function(i){return i.type==='plan';}).length};}
+        var mi=await dbGetAll('monthly_items');
+        var uy=parseInt((new URL('http://x'+url)).searchParams.get('year')||'2026');
+        var mo={};
+        for(var mm=1;mm<=12;mm++){var fi=mi.filter(function(i){return i.year===uy&&i.month===mm;}); mo[mm]={summary:fi.filter(function(i){return i.type==='summary';}).length,plan:fi.filter(function(i){return i.type==='plan';}).length};}
         return jsonResponse({year:uy,months:mo});
+
       case 'dedup': return jsonResponse({removed:0,ids:[],message:'ok'});
       case 'cleanDates': return jsonResponse({removed:0,message:'ok'});
+
       case 'stats':
-        var vs=await dataGetAll('bd_visits'), bi={}, bo={}, ba={};
+        var vs=await dbGetAll('bd_visits'), bi={}, bo={}, ba={};
         vs.forEach(function(v){bi[v.industry]=(bi[v.industry]||0)+1; bo[v.opportunity]=(bo[v.opportunity]||0)+1; ba[v.action_status]=(ba[v.action_status]||0)+1;});
         return jsonResponse({total:vs.length,byIndustry:Object.keys(bi).map(function(k){return {industry:k,cnt:bi[k]};}),byOpportunity:Object.keys(bo).map(function(k){return {opportunity:k,cnt:bo[k]};}),byAction:Object.keys(ba).map(function(k){return {action_status:k,cnt:ba[k]};})});
+
       case 'analyzeMonthly':
-        var am=await dataGetAll('monthly_items'), dn=am.filter(function(i){return i.status==='完成'||i.status==='done';}).length;
-        return jsonResponse({year:2026,month:6,overview:{total:am.length,done:dn,pending:am.length-dn,rate:am.length?(dn/am.length*100):0,grade:'B'},prevMonth:{month:5,year:2026,total:0,done:0,rate:0},velocity:null,bdPipeline:null,priorityAnalysis:[],categoryAnalysis:[],unfinishedReasons:[],bdExploration:{total:0,done:0,rate:0,items:[]},followUps:[],recommendations:[],summary:''});
-      case 'analyzeSequential': return jsonResponse({year:2026,quarters:{},monthly:{},summary:''});
-      case 'getAllTasks': return jsonResponse(await dataGetAll('project_tasks'));
-      case 'getByProject': var pt=await dataGetAll('project_tasks'); return jsonResponse(pt.filter(function(t){return t.project_id===id;}));
-      case 'createTask': bd.project_id=id; bd.created_at=now; var pid=await dataPut('project_tasks',Object.assign({},bd,{id:undefined})); return jsonResponse(await dbGet('project_tasks',pid),201);
-      case 'updateTask': var ptk=await dbGet('project_tasks',id); if(!ptk) return errorResponse('Not found',404); await dataPut('project_tasks',Object.assign({},ptk,bd,{id:id})); return jsonResponse(await dbGet('project_tasks',id));
+        var am=await dbGetAll('monthly_items'), dn=am.filter(function(i){return i.status==='完成'||i.status==='done';}).length;
+        return jsonResponse({year:2026,month:6,overview:{total:am.length,done:dn,pending:am.length-dn,rate:am.length?(dn/am.length*100):0,grade:'B'},prevMonth:{month:5,year:2026,total:0,done:0,rate:0},velocity:null,bdPipeline:null,priorityAnalysis:[],categoryAnalysis:[],unfinishedReasons:[],bdExploration:{total:0,done:0,rate:0,items:[]},followUps:[],recommendations:[],summary:'本地数据分析'});
+
+      case 'analyzeSequential':
+        return jsonResponse({year:2026,quarters:{},monthly:{},summary:'本地数据分析'});
+
+      case 'getAllTasks': return jsonResponse(await dbGetAll('project_tasks'));
+      case 'getByProject':
+        var pt=await dbGetAll('project_tasks');
+        return jsonResponse(pt.filter(function(t){return t.project_id===id;}));
+      case 'createTask':
+        var tObj={}; for(var kt in bd){tObj[kt]=bd[kt];}
+        tObj.project_id=id; tObj.created_at=now; delete tObj.id;
+        var tNid=await dbPut('project_tasks',tObj);
+        return jsonResponse(await dbGet('project_tasks',tNid),201);
+      case 'updateTask':
+        var ptk=await dbGet('project_tasks',id);
+        if(!ptk) return errorResponse('Not found',404);
+        for(var ku in bd){ptk[ku]=bd[ku];}
+        await dbPut('project_tasks',ptk);
+        return jsonResponse(await dbGet('project_tasks',id));
       case 'deleteTask': await dbDelete('project_tasks',id); return jsonResponse({success:true});
+
       case 'getLinks':
-        var al=await dataGetAll('project_links'), pl=al.filter(function(l){return l.project_a===id||l.project_b===id;}), ap=await dataGetAll('projects');
-        return jsonResponse(pl.map(function(l){var oid=l.project_a===id?l.project_b:l.project_a; return {link:l,otherProject:ap.find(function(p){return p.id===oid;})||null};}));
+        var al=await dbGetAll('project_links'), pl=al.filter(function(l){return l.project_a===id||l.project_b===id;}), ap=await dbGetAll('projects');
+        return jsonResponse(pl.map(function(l){var oid=l.project_a===id?l.project_b:l.project_a;var op=ap.find(function(p){return p.id===oid;}); return {link:l,otherProject:op||null};}));
+
       case 'suggested': return jsonResponse([]);
-      case 'createLink': bd.created_at=now; var lid=await dataPut('project_links',Object.assign({},bd,{id:undefined})); return jsonResponse(await dbGet('project_links',lid),201);
+
+      case 'createLink':
+        var lObj={}; for(var kl in bd){lObj[kl]=bd[kl];}
+        lObj.created_at=now; delete lObj.id;
+        var lNid=await dbPut('project_links',lObj);
+        return jsonResponse(await dbGet('project_links',lNid),201);
       case 'deleteLink': await dbDelete('project_links',id); return jsonResponse({success:true});
+
       case 'sourceDetail':
         var q=new URL('http://x'+url).searchParams, tp=q.get('type'), si=parseInt(q.get('id'));
         if(tp==='todo') return jsonResponse(await dbGet('todos',si));
         if(tp==='monthly') return jsonResponse(await dbGet('monthly_items',si));
         if(tp==='bd_visit') return jsonResponse(await dbGet('bd_visits',si));
         return jsonResponse(null);
+
       case 'sync': return jsonResponse({success:true});
-      default: return errorResponse('Unknown: '+a);
+
+      default: return errorResponse('Unknown action: '+a);
     }
   }catch(e){
-    console.error('API Error:', e);
-    return errorResponse(e.message||'Internal error');
+    dlog('API Handler Error ['+a+']: '+e.message);
+    return errorResponse(e.message||'Internal error', 500);
   }
 }
 
 // ═══════════════════════════
-// FETCH INTERCEPTOR
+// FETCH INTERCEPTOR (robust)
 // ═══════════════════════════
 var _fetch = window.fetch;
 window.fetch = function(input, init){
   init = init || {};
-  var url = typeof input === 'string' ? input : input.url;
-  if(url.indexOf('/api/')>=0){
-    return handleAPI(url, (init.method||'GET').toUpperCase(), init.body||null);
+  var url, method, body;
+
+  if(typeof input === 'string'){
+    url = input;
+    method = (init.method || 'GET').toUpperCase();
+    body = init.body || null;
+  } else if(input && input.url){
+    url = input.url;
+    method = (input.method || init.method || 'GET').toUpperCase();
+    body = init.body || input.body || null;
+  } else {
+    return _fetch.call(window, input, init);
   }
+
+  if(url.indexOf('/api/')>=0){
+    dlog(method+' '+url);
+    return handleAPI(url, method, body);
+  }
+
   return _fetch.call(window, input, init);
 };
 
 // ═══════════════════════════
-// GLOBAL EXPORT/IMPORT
+// GLOBAL HELPERS
 // ═══════════════════════════
 window.exportAllData = async function(){
   var data={};
   for(var i=0; i<STORES.length; i++){
     var s=STORES[i]; if(s==='system') continue;
-    data[s]=await dataGetAll(s);
+    data[s]=await dbGetAll(s);
   }
   var b=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
   var a=document.createElement('a');
   a.href=URL.createObjectURL(b);
   a.download='BD_backup_'+new Date().toISOString().slice(0,10)+'.json';
   a.click();
-  console.log('Data exported');
+  dlog('Data exported successfully');
 };
 window.importAllData = async function(file){
   var t=await file.text(), data=JSON.parse(t);
   for(var s in data){
     if(STORES.indexOf(s)<0||s==='system') continue;
-    for(var j=0;j<data[s].length;j++) await dataPut(s,data[s][j]);
+    for(var j=0;j<data[s].length;j++){ data[s][j].id=undefined; await dbPut(s,data[s][j]); }
   }
   alert('导入完成，刷新页面生效');
   location.reload();
 };
+window.runDiagnostics = async function(){
+  var report = ['=== BD System Diagnostics ==='];
+  try{
+    var db = await openDB();
+    report.push('IndexedDB: OK (stores: '+Array.from(db.objectStoreNames).join(', ')+')');
+    db.close();
+  }catch(e){ report.push('IndexedDB: FAIL - '+e.message); }
+
+  for(var i=0; i<STORES.length; i++){
+    try{
+      var count = (await dbGetAll(STORES[i])).length;
+      report.push('Store '+STORES[i]+': '+count+' records');
+    }catch(e){ report.push('Store '+STORES[i]+': ERROR - '+e.message); }
+  }
+
+  report.push('API Interceptor: Active');
+  report.push('HashRouter: Active');
+  report.push('CDN: '+location.hostname);
+  report.push('Debug Log: '+DEBUG_LOG.length+' entries');
+  report.push('==============================');
+  console.log(report.join('\n'));
+  return report.join('\n');
+};
+
+// ═══════════════════════════
+// POST-MOUNT TEST
+// ═══════════════════════════
+setTimeout(async function(){
+  try{
+    await openDB();
+    dlog('Post-init: IndexedDB ready');
+    status('就绪');
+  }catch(e){
+    dlog('Post-init: IndexedDB FAILED - '+e.message);
+    status('数据库初始化失败: '+e.message);
+  }
+},500);
 
 })();
 </script>
